@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,21 +34,19 @@ func gokjobQueueTick(t time.Time) {
 	nowtime := ktime()
 	for itt := range kjobStack {
 		if kjobStack[itt].running == false && kjobStack[itt].NextRun < nowtime {
-			log("kjob.go:gokjobQueueTick()", "Starting "+kjobStack[itt].CI)
 			go kjobStack[itt].start()
 		}
 	}
 }
 
 type kjob struct {
-	Method    string            `json:"method"`    //Method: 'get', 'put', 'update', 'delete'
-	Spec      string            `json:"spec"`      //Spec: '/v1', '/v2', '/v3', '/v4', '/v5', '/v6'
-	Endpoint  string            `json:"endpoint"`  //Endpoint: '/markets/{region_id}/orders/', '/characters/{character_id}/skills/'
-	Entity    map[string]string `json:"entity"`    //Entity: "region_id": "10000002", "character_id": "1120048880"
-	URL       string            `json:"url"`       //URL: concat of Spec and Endpoint, with entity processed
-	StartTime int64             `json:"startTime"` //StartTime: milliseconds since 1970
-	CI        string            `json:"ci"`        //CI: concat of endpoint:JSON.Marshall(entity)
-	Cache     float64           `json:"cache"`     //Cache: milliseconds from cache miss
+	Method   string            `json:"method"`   //Method: 'get', 'put', 'update', 'delete'
+	Spec     string            `json:"spec"`     //Spec: '/v1', '/v2', '/v3', '/v4', '/v5', '/v6'
+	Endpoint string            `json:"endpoint"` //Endpoint: '/markets/{region_id}/orders/', '/characters/{character_id}/skills/'
+	Entity   map[string]string `json:"entity"`   //Entity: "region_id": "10000002", "character_id": "1120048880"
+	URL      string            `json:"url"`      //URL: concat of Spec and Endpoint, with entity processed
+	CI       string            `json:"ci"`       //CI: concat of endpoint:JSON.Marshall(entity)
+	Cache    float64           `json:"cache"`    //Cache: milliseconds from cache miss
 
 	Security string `json:"security"` //Security: EVESSO Token required or "none"
 	Token    string `json:"token"`    //evesso access_token
@@ -71,17 +70,20 @@ type kjob struct {
 	PagesProcessed uint16 `json:"pagesProcessed"` //count of completed pages (excluding heads)
 	PagesQueued    uint16 `json:"pagesQueued"`    //cumlative count of pages queued
 
-	Records      uint16 `json:"records"`      //cumlative count of records
-	ChangedRows  uint16 `json:"changedRows"`  //cumlative count of changed records
-	AffectedRows uint16 `json:"affectedRows"` //cumlative count of affected records
-	RemovedRows  uint16 `json:"removedRows"`  //cumlative count of removed records
-	QueriesDone  uint16 `json:"queries_done"` //cumlative count of completed SQL Queries
-	Queries      uint16 `json:"queries"`      //cumlative count of fired SQL Queries
-
-	page    []kpage       //array of child kpages
-	heart   *time.Timer   //heartbeat timer
-	req     *http.Request //http request
-	running bool
+	/*
+		Records      uint16 `json:"records"`      //cumlative count of records
+		ChangedRows  uint16 `json:"changedRows"`  //cumlative count of changed records
+		AffectedRows uint16 `json:"affectedRows"` //cumlative count of affected records
+		RemovedRows  uint16 `json:"removedRows"`  //cumlative count of removed records
+		QueriesDone  uint16 `json:"queries_done"` //cumlative count of completed SQL Queries
+		Queries      uint16 `json:"queries"`      //cumlative count of fired SQL Queries
+	*/
+	heart       *time.Timer   //heartbeat timer
+	req         *http.Request //http request
+	running     bool
+	mutex       sync.RWMutex
+	Runs        int `json:"runs"`
+	NumInFlight int `json:"numInFlight"`
 }
 
 func newKjob(method string, specnum string, endpoint string, entity map[string]string, pages uint16) {
@@ -119,19 +121,18 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 	}
 	ciString, _ := json.Marshal(entity)
 	tmp := kjob{
-		Method:    method,
-		Spec:      specnum,
-		Endpoint:  endpoint,
-		Entity:    entity,
-		Pages:     pages,
-		PullType:  pages,
-		URL:       fmt.Sprintf("%s%s?datasource=tranquility", specnum, endpoint),
-		heart:     time.NewTimer(2 * time.Second),
-		StartTime: ktime(),
-		CI:        fmt.Sprintf("%s|%s", endpoint, ciString),
-		Cache:     cac * 1000,
-		Security:  ecurity,
-		running:   false}
+		Method:   method,
+		Spec:     specnum,
+		Endpoint: endpoint,
+		Entity:   entity,
+		Pages:    pages,
+		PullType: pages,
+		URL:      fmt.Sprintf("%s%s?datasource=tranquility", specnum, endpoint),
+		heart:    time.NewTimer(30 * time.Second),
+		CI:       fmt.Sprintf("%s|%s", endpoint, ciString),
+		Cache:    cac * 1000,
+		Security: ecurity,
+		mutex:    sync.RWMutex{}}
 	for se, sed := range entity {
 		tmp.URL = strings.Replace(tmp.URL, "{"+se+"}", sed, -1)
 	}
@@ -147,29 +148,44 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 }
 func (k *kjob) beat() {
 	log("kjob.go:k.beat()", k.CI+" ZOMBIE!")
+	k.print()
+	k.heart.Reset(30 * time.Second)
 }
 func (k *kjob) print() {
-	jsonData, err := json.MarshalIndent(&k, "", "    ")
-	if err != nil {
-		panic(err)
-	}
-	log("kjob.go:k.print()", fmt.Sprintf("%s kjobQueue Len:%d Processed:%d Finished:%d", jsonData, kjobQueueLen, kjobQueueProcessed, kjobQueueFinished))
+	// jsonData, err := json.MarshalIndent(&k, "", "    ")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	log("kjob.go:k.print()", fmt.Sprintf("%s %s\n\tcache:%.0f security:%s token:%s\n\tnextRun:%d, expires:%d, expires_in:%.0f\n\tAPICalls:%d, APICache:%d, APIErrors:%d\n\tbytesDownloaded:%d, bytesCached: %d\n\tPullType:%d, Pages:%d, pagesProcessed:%d, pagesQueued:%d, runs:%d, numInFlight:%d\n\tkjobQueue Len:%d Processed:%d Finished:%d Runtime:%dms",
+		k.Method, k.CI,
+		k.Cache, k.Security, k.Token,
+		k.NextRun, k.Expires, k.ExpiresIn,
+		k.APICalls, k.APICache, k.APIErrors,
+		k.BytesDownloaded, k.BytesCached,
+		k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs, k.NumInFlight,
+		kjobQueueLen, kjobQueueProcessed, kjobQueueFinished, getMetric(k.CI)))
 }
 func (k *kjob) start() {
-	if k.running {
-		return
-	}
-	k.heart.Reset(2 * time.Second)
+	k.mutex.Lock()
+	k.heart.Reset(30 * time.Second)
 	k.running = true
+	k.Runs++
+	addMetric(k.CI)
+	k.mutex.Unlock()
+	k.NumInFlight++
 	k.run()
 }
 func (k *kjob) stop() {
 	//todo: final sql write, store metrics
+	//k.mutex.Lock() **Should be locked in a wrapper around the call to this.
 	k.heart.Stop()
 	k.running = false
-	k.print()
+	kjobQueueFinished++
+	k.NumInFlight--
+	// k.print()
 	k.Token = "none"
 	k.Ins = []string{}
+	k.Expires = 0
 	k.APICalls = 0
 	k.APICache = 0
 	k.APIErrors = 0
@@ -178,42 +194,45 @@ func (k *kjob) stop() {
 	k.Pages = k.PullType
 	k.PagesProcessed = 0
 	k.PagesQueued = 0
-	k.Records = 0
-	k.ChangedRows = 0
-	k.AffectedRows = 0
-	k.RemovedRows = 0
-	k.QueriesDone = 0
-	k.Queries = 0
-
-	k.page = []kpage{}
-	kjobQueueFinished++
+	/*
+		k.Records = 0
+		k.ChangedRows = 0
+		k.AffectedRows = 0
+		k.RemovedRows = 0
+		k.QueriesDone = 0
+		k.Queries = 0
+	*/
+	//k.mutex.Unlock()
 }
 func (k *kjob) run() {
-	k.heart.Reset(2000000000)
+	k.heart.Reset(30 * time.Second)
 	if k.Security != "none" && len(k.Token) < 5 {
 		log("kjob.go:k.run() "+k.CI, "todo: get token.")
-		return
-	}
-	if len(k.page) > 0 {
-		log("kjob.go:k.run() "+k.CI, "ERROR: Already have pages?")
 		return
 	}
 	if k.Pages == 0 {
 		go k.requestHead()
 		return
 	}
-	for i := uint16(1); i <= k.Pages; i++ {
-		k.newPage(i)
+	if k.Pages != k.PagesQueued {
+		k.queuePages()
 	}
 	return
+}
+func (k *kjob) queuePages() {
+	k.mutex.Lock()
+	//log("kjob.go:k.queuePages()", fmt.Sprintf("%s Queueing pages %d to %d", k.CI, k.PagesQueued+1, k.Pages))
+	for i := k.PagesQueued + 1; i <= k.Pages; i++ {
+		k.newPage(i)
+	}
+	k.mutex.Unlock()
 }
 func (k *kjob) requestHead() {
 	//log("kjob.go:k.requestHead("+k.CI+")", "requesting head "+k.CI)
 	addMetric("HEAD:" + k.CI)
-	k.heart.Reset(2 * time.Second)
+	k.heart.Reset(30 * time.Second)
 	k.APICalls++
 	if backoff {
-		k.heart.Reset(7 * time.Second)
 		time.Sleep(5 * time.Second)
 		go k.requestHead()
 		return
@@ -276,9 +295,9 @@ func (k *kjob) requestHead() {
 		}
 		if timepct < minCachePct {
 			log("kjob.go:k.requestHead("+k.CI+") )", k.CI+" expires too soon, recycling!")
-			k.heart.Reset((2 * time.Second) + (time.Duration(k.ExpiresIn) * time.Millisecond))
-			time.Sleep((500 * time.Millisecond) + (time.Duration(k.ExpiresIn) * time.Millisecond))
-			go k.requestHead()
+			k.mutex.Lock()
+			k.stop()
+			k.mutex.Unlock()
 			return
 		}
 		if pgs, ok := resp.Header["X-Pages"]; ok {
@@ -298,8 +317,10 @@ func (k *kjob) requestHead() {
 func (k *kjob) updateExp(expire string) {
 	exp, err := time.Parse("Mon, 02 Jan 2006 15:04:05 MST", expire)
 	if err == nil {
+		k.mutex.Lock()
 		k.Expires = int64(exp.UnixNano() / int64(time.Millisecond))
 		k.ExpiresIn = float64(k.Expires - ktime())
-		k.NextRun = k.Expires + 1000
+		k.NextRun = k.Expires + 750
+		k.mutex.Unlock()
 	}
 }

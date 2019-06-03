@@ -19,7 +19,7 @@ var errorResetTimer time.Ticker
 
 var backoff = false
 
-var maxInFlight = 60
+var maxInFlight = 120
 var curInFlight = 0
 
 type kpageQueueS struct {
@@ -59,14 +59,11 @@ func (kpageQueueS *kpageQueueS) Pop() *kpage {
 func gokpageQueueTick(t time.Time) {
 
 	if kpageQueueLen > 0 && curInFlight < maxInFlight && !backoff {
-		//fmt.Print("Tick at", t.UnixNano(), " \n")
 	Start:
 		qitem := kpageQueue.Pop()
-		//qitem.heart.Stop()
 		curInFlight++
 		go qitem.requestPage()
 		//log("kpage.go:gokpageQueueTick()", fmt.Sprintf("Got page %s, %d remaining, %d processed", qitem.cip, kpageQueueLen, kpageQueueProcessed))
-		//qitem.print()
 		if kpageQueueLen > 0 && curInFlight < maxInFlight && !backoff {
 			goto Start
 		}
@@ -92,11 +89,9 @@ func (k *kjob) newPage(page uint16) {
 		job:  k,
 		page: page,
 		cip:  fmt.Sprintf("%s|%d", k.CI, page)}
-
 	kpageQueue.Push(&tmp)
-	k.page = append(k.page, tmp)
 	k.PagesQueued++
-	log("kpage.go:newPage()", "Queued page "+tmp.cip)
+	//log("kpage.go:newPage()", "Queued page "+tmp.cip)
 }
 func curInFlightmm() {
 	curInFlight--
@@ -149,7 +144,7 @@ func (k *kpage) requestPage() {
 	*/
 	defer resp.Body.Close()
 
-	k.job.heart.Reset(2 * time.Second)
+	k.job.heart.Reset(30 * time.Second)
 
 	if resp.StatusCode == 200 {
 		var err error
@@ -177,18 +172,21 @@ func (k *kpage) requestPage() {
 			pgss, err := strconv.Atoi(pgs[0])
 			if err == nil {
 				if k.job.Pages != uint16(pgss) {
-					log("kpage.go:k.requestPage("+k.cip+")", fmt.Sprintf("pages missmatch! todo: queue missing pages!"))
 					k.job.Pages = uint16(pgss)
+					if k.job.Pages != k.job.PagesQueued {
+						k.job.queuePages()
+					}
 				}
 			}
 
 		}
 		//log("kpage.go:k.requestPage("+k.cip+")", fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db in %dms", resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body), getMetric(k.cip)))
+		k.job.mutex.Lock()
 		k.job.PagesProcessed++
-		k.job.PagesQueued--
-		if k.job.PagesQueued == 0 {
+		if k.job.PagesProcessed == k.job.Pages {
 			k.job.stop()
 		}
+		k.job.mutex.Unlock()
 		//todo: call kjobIsDone() ... and write it.
 	} else {
 		kpageQueue.Push(k)

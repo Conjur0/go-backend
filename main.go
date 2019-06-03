@@ -23,7 +23,7 @@ func log(caller string, message interface{}) {
 	logMutex.Unlock()
 }
 func ktime() int64 {
-	return time.Now().UnixNano() / 1000000
+	return time.Now().UnixNano() / int64(time.Millisecond)
 }
 
 func safeMove(src string, dst string) {
@@ -62,8 +62,8 @@ func main() {
 	go func() {
 		for range tock.C {
 			//newKjob("get", "/v4", "/characters/{character_id}/skills/", map[string]string{"character_id": "1120048880"}, 0)
-			for i := 10000001; i < 10000003; i++ {
-				newKjob("get", "/v1", "/markets/{region_id}/orders/", map[string]string{"region_id": strconv.Itoa(i)}, 0)
+			for i := 10000001; i < 10000070; i++ {
+				newKjob("get", "/v1", "/markets/{region_id}/orders/", map[string]string{"region_id": strconv.Itoa(i)}, 1)
 			}
 		}
 	}()

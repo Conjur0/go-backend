@@ -33,7 +33,6 @@ func readEtags() {
 		log("etag.go:readEtags() json.Unmarshal", err)
 		return
 	}
-	byteValue = []byte("")
 	log("etag.go:readEtags()", fmt.Sprintf("Parsed %s %db, in %dms", etagFile, len(byteValue), getMetric(etagFile)))
 }
 func writeEtags() {
