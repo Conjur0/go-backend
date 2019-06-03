@@ -57,7 +57,7 @@ func getSpec(fName string) {
 	obj := strings.TrimRight(fName, filepath.Ext(fName))
 	downloadPath := fmt.Sprintf("/%s/swagger.json?datasource=tranquility", obj)
 	addMetric(downloadPath)
-	etaghdr := getEtag(downloadPath, "0")
+	etaghdr := getEtag(downloadPath)
 
 	req, err := http.NewRequest("GET", esiURL+downloadPath, nil)
 	if err != nil {
@@ -75,7 +75,7 @@ func getSpec(fName string) {
 	if resp.StatusCode == 200 {
 		defer resp.Body.Close()
 		if _, ok := resp.Header["Etag"]; ok {
-			go setEtag(downloadPath, "0", resp.Header["Etag"][0])
+			go setEtag(downloadPath, resp.Header["Etag"][0], []byte(""))
 		}
 		out, err := os.Create("spec/" + fName + ".tmp")
 		if err != nil {

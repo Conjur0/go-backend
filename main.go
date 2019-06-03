@@ -41,7 +41,7 @@ func main() {
 	spec = make(map[string]interface{})
 	etag = make(map[string]map[string]string)
 	metrics = make(map[string]int64)
-	go readEtags()
+	readEtags()
 
 	client := &http.Client{}
 	client.Transport = &http2.Transport{}
@@ -62,9 +62,8 @@ func main() {
 	go func() {
 		for range tock.C {
 			//newKjob("get", "/v4", "/characters/{character_id}/skills/", map[string]string{"character_id": "1120048880"}, 0)
-			for i := 10000035; i < 10000041; i++ {
+			for i := 10000001; i < 10000003; i++ {
 				newKjob("get", "/v1", "/markets/{region_id}/orders/", map[string]string{"region_id": strconv.Itoa(i)}, 0)
-
 			}
 		}
 	}()

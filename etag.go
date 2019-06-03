@@ -23,8 +23,8 @@ func readEtags() {
 		log("etag.go:readEtags() os.Open", err)
 		return
 	}
-	defer jsonFile.Close()
 	byteValue, errr := ioutil.ReadAll(jsonFile)
+	jsonFile.Close()
 	if errr != nil {
 		log("etag.go:readEtags() ioutil.ReadAll", err)
 		return
@@ -33,6 +33,7 @@ func readEtags() {
 		log("etag.go:readEtags() json.Unmarshal", err)
 		return
 	}
+	byteValue = []byte("")
 	log("etag.go:readEtags()", fmt.Sprintf("Parsed %s %db, in %dms", etagFile, len(byteValue), getMetric(etagFile)))
 }
 func writeEtags() {
@@ -63,34 +64,54 @@ func writeEtags() {
 	log("etag.go:writeEtags()", fmt.Sprintf("Wrote %s %db, in %dms", etagFile, len(jsonData), getMetric(etagFile)))
 }
 
-func getEtag(uri string, id string) string {
-	etagMutex.RLock()
-	defer etagMutex.RUnlock()
-	_, ok := etag[uri]
+func getEtag(cip string) string {
+	etagMutex.Lock()
+	defer etagMutex.Unlock()
+	_, ok := etag[cip]
 	if ok {
-		_, ok := etag[uri][id]
-		if ok {
-			return etag[uri][id]
+		for key := range etag[cip] {
+			return key
 		}
 	}
 	return ""
 }
-func setEtag(uri string, id string, value string) {
+
+func getEtagData(cip string) []byte {
 	etagMutex.Lock()
-	if _, ok := etag[uri]; ok == false {
-		etag[uri] = make(map[string]string)
+	defer etagMutex.Unlock()
+	_, ok := etag[cip]
+	if ok {
+		for key := range etag[cip] {
+			return []byte(etag[cip][key])
+		}
 	}
-	if etag[uri][id] != value {
-		etag[uri][id] = value
+	return []byte{}
+}
+
+func setEtag(cip string, tag string, value []byte) {
+	etagMutex.Lock()
+	if _, ok := etag[cip]; ok == false {
+		etag[cip] = make(map[string]string)
+	}
+	var key = "none"
+	for pey := range etag[cip] {
+		if pey != tag {
+			delete(etag[cip], key)
+		}
+		key = pey
+	}
+	if key != tag {
+		etag[cip][tag] = string(value)
 		etagDirty = true
 	}
 	etagMutex.Unlock()
 }
 func etagWriteTimerInit() {
-	etagWriteTimer = time.NewTimer(300 * time.Second)
+	etagWriteTimer = time.NewTimer(30 * time.Second)
 	go func() {
 		for range etagWriteTimer.C {
 			writeEtags()
 		}
 	}()
+	log("etag.go:etagWriteTimerInit()", "Timer Initialized!")
 }
