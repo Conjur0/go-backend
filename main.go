@@ -59,7 +59,7 @@ func main() {
 	go kpageQueueInit()
 	go etagWriteTimerInit()
 
-	tock := time.NewTimer(3000000000) // 3s
+	tock := time.NewTimer(3 * time.Second) // 3s
 	go func() {
 		for range tock.C {
 			//newKjob("get", "/v4", "/characters/{character_id}/skills/", map[string]string{"character_id": "1120048880"}, 0)
@@ -69,7 +69,5 @@ func main() {
 		}
 	}()
 
-	for {
-		time.Sleep(1 * time.Second)
-	}
+	select {}
 }

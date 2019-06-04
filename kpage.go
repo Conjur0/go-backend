@@ -73,9 +73,11 @@ func (kpageQueueS *kpageQueueS) Pop() *kpage {
 	}
 }
 func gokpageQueueTick(t time.Time) {
+	kpageQueueMutex.Lock()
+	kpageQueueLen := kpageQueue.len
+	kpageQueueMutex.Unlock()
 
-	if kpageQueue.len > 0 && curInFlight < maxInFlight && !backoff {
-	Start:
+	for kpageQueueLen > 0 && curInFlight < maxInFlight && !backoff {
 		qitem := kpageQueue.Pop()
 		if qitem.dead == false {
 			err := -1
@@ -93,11 +95,9 @@ func gokpageQueueTick(t time.Time) {
 			go inFlight[err].requestPage()
 			inFlightMutex.Unlock()
 		}
-		//log("kpage.go:gokpageQueueTick()", fmt.Sprintf("Got page %s, %d remaining", qitem.cip, kpageQueueS.len))
-		if kpageQueue.len > 0 && curInFlight < maxInFlight && !backoff {
-			goto Start
-		}
-		//fmt.Println(qitem)
+		kpageQueueMutex.Lock()
+		kpageQueueLen = kpageQueue.len
+		kpageQueueMutex.Unlock()
 	}
 }
 func kpageQueueInit() {
