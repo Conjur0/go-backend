@@ -25,20 +25,19 @@ import (
 	"time"
 )
 
+var minCachePct float64 = 10
+
 var kjobStack = make(map[int]*kjob, 4096)
 var kjobStackMutex = sync.RWMutex{}
 var kjobQueueLen int
-var kjobQueueProcessed int
-var kjobQueueFinished int
-var kjobQueueTick time.Ticker
-var minCachePct float64 = 10
+var kjobQueueTick *time.Ticker
 
 type kjobQueueStruct struct {
 	elements chan kjob
 }
 
 func kjobQueueInit() {
-	kjobQueueTick := time.NewTicker(500 * time.Millisecond) //500ms
+	kjobQueueTick = time.NewTicker(500 * time.Millisecond) //500ms
 	go func() {
 		for t := range kjobQueueTick.C {
 			gokjobQueueTick(t)
@@ -170,7 +169,6 @@ func (k *kjob) beat() {
 	k.mutex.Lock()
 	k.stop(true)
 	k.mutex.Unlock()
-	kjobQueueFinished--
 	k.start()
 }
 func (k *kjob) print(msg string) {
@@ -186,14 +184,14 @@ func (k *kjob) print(msg string) {
 	// 	k.BytesDownloaded, k.BytesCached,
 	// 	k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs,
 	// 	kjobQueueLen, kjobQueueProcessed, kjobQueueFinished, getMetric(k.CI)))
-	log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s %.0f %s %s %d %d %.0f %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+	log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s %.0f %s %s %d %d %.0f %d %d %d %d %d %d %d %d %d %d %d %d",
 		k.Method, k.CI,
 		k.Cache, k.Security, k.Token,
 		k.NextRun, k.Expires, k.ExpiresIn,
 		k.APICalls, k.APICache, k.APIErrors,
 		k.BytesDownloaded, k.BytesCached,
 		k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs,
-		kjobQueueLen, kjobQueueProcessed, kjobQueueFinished, getMetric(k.CI)))
+		kjobQueueLen, getMetric(k.CI)))
 }
 func (k *kjob) start() {
 	k.mutex.Lock()
@@ -212,8 +210,6 @@ func (k *kjob) stop(zombie bool) {
 		k.page[it].destroy()
 	}
 	k.running = false
-	kjobQueueFinished++
-	// k.print("k.stop()")
 	k.Token = "none"
 	k.Ins = []string{}
 	k.Expires = 0
@@ -343,6 +339,9 @@ func (k *kjob) requestHead() {
 	}
 
 }
+
+//"2006-01-02T15:04:05Z"
+//"Mon, 02 Jan 2006 15:04:05 MST"
 func (k *kjob) updateExp(expire string) {
 	exp, err := time.Parse("Mon, 02 Jan 2006 15:04:05 MST", expire)
 	if err == nil {

@@ -40,24 +40,22 @@ func safeMove(src string, dst string) {
 func main() {
 	log("main.go:main()", "Hello World!")
 	spec = make(map[string]interface{})
-	etag = make(map[string]map[string]string)
 	metrics = make(map[string]int64)
-	readEtags()
+	redisInit()
 
 	client := &http.Client{}
 	client.Transport = &http2.Transport{}
 
-	go updateSpec()
-	go readSpec("v1")
-	go readSpec("v2")
-	go readSpec("v3")
-	go readSpec("v4")
-	go readSpec("v5")
-	go readSpec("v6")
+	updateSpec()
+	readSpec("v1")
+	readSpec("v2")
+	readSpec("v3")
+	readSpec("v4")
+	readSpec("v5")
+	readSpec("v6")
 
-	go kjobQueueInit()
-	go kpageQueueInit()
-	go etagWriteTimerInit()
+	kjobQueueInit()
+	kpageQueueInit()
 
 	tock := time.NewTimer(3 * time.Second) // 3s
 	go func() {

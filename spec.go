@@ -52,7 +52,7 @@ func updateSpec() {
 		}
 		obj := strings.TrimRight(fName, filepath.Ext(fName))
 		fAge := time.Now().Unix() - file.ModTime().Unix()
-		if fAge > 3600 {
+		if fAge > 30 {
 			log("spec.go:updateSpec()", fmt.Sprintf("%s (%s) is %ds old, requesting new...", fName, obj, fAge))
 			go getSpec(fName)
 		} else {
