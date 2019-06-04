@@ -1,3 +1,18 @@
+//////////////////////////////////////////////////////////////////////////////////
+// kjob.go - ESI Job Management
+//////////////////////////////////////////////////////////////////////////////////
+//  kjobQueueInit():  Timer Init (called once from main)
+//  gokjobQueueTick(t):  Timer tick function
+//  newKjob(method, specnum, endpoint, entity, pages):  Initializes a new ESI Job, and adds it to the revolving door
+//  kjob.beat():  Zombie Hunter- goal is for this to never be called.
+//  kjob.print(string):  Universal "print all the things" function for debugging
+//  kjob.start():  Brings kjob out of hibernation
+//  kjob.stop():  Places kjob into hibernation
+//  kjob.run():  Performs the next step, to process kjob
+//  kjob.queuePages():  Adds all currently un-queued pages to the pages queue
+//  kjob.requestHead():  Pulls a HEAD for the page, to identify expiration and pagecount
+//  kjob.updateExp():  Centralized method for updating kjob expiration
+
 package main
 
 import (
@@ -87,7 +102,6 @@ type kjob struct {
 }
 
 func newKjob(method string, specnum string, endpoint string, entity map[string]string, pages uint16) {
-
 	l1, ok := spec[specnum].(map[string]interface{})
 	if ok == false {
 		log("kjob.go:newKjob()", "Invalid job received: SPEC "+specnum+" invalid")
@@ -147,16 +161,16 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 	kjobQueueLen++
 }
 func (k *kjob) beat() {
-	log("kjob.go:k.beat()", k.CI+" ZOMBIE!")
-	k.print()
+	//log("kjob.go:k.beat()", k.CI+" ZOMBIE!")
+	k.print("ZOMBIE")
 	k.heart.Reset(30 * time.Second)
 }
-func (k *kjob) print() {
+func (k *kjob) print(msg string) {
 	// jsonData, err := json.MarshalIndent(&k, "", "    ")
 	// if err != nil {
 	// 	panic(err)
 	// }
-	log("kjob.go:k.print()", fmt.Sprintf("%s %s\n\tcache:%.0f security:%s token:%s\n\tnextRun:%d, expires:%d, expires_in:%.0f\n\tAPICalls:%d, APICache:%d, APIErrors:%d\n\tbytesDownloaded:%d, bytesCached: %d\n\tPullType:%d, Pages:%d, pagesProcessed:%d, pagesQueued:%d, runs:%d, numInFlight:%d\n\tkjobQueue Len:%d Processed:%d Finished:%d Runtime:%dms",
+	log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s cache:%.0f security:%s token:%s nextRun:%d, expires:%d, expires_in:%.0f APICalls:%d, APICache:%d, APIErrors:%d bytesDownloaded:%d, bytesCached: %d PullType:%d, Pages:%d, pagesProcessed:%d, pagesQueued:%d, runs:%d, numInFlight:%d kjobQueue Len:%d Processed:%d Finished:%d Runtime:%dms",
 		k.Method, k.CI,
 		k.Cache, k.Security, k.Token,
 		k.NextRun, k.Expires, k.ExpiresIn,
@@ -182,7 +196,7 @@ func (k *kjob) stop() {
 	k.running = false
 	kjobQueueFinished++
 	k.NumInFlight--
-	// k.print()
+	// k.print("k.stop()")
 	k.Token = "none"
 	k.Ins = []string{}
 	k.Expires = 0
@@ -278,10 +292,10 @@ func (k *kjob) requestHead() {
 			go setEtag(k.CI, resp.Header["Etag"][0], []byte(""))
 		}
 		//log("kjob.go:k.requestHead("+k.CI+") )", fmt.Sprintf("RCVD (200) %s in %dms", k.URL, getMetric("HEAD:"+k.CI)))
-		//k.print()
+		//k.print("")
 	} else if resp.StatusCode == 304 {
 		//log("kjob.go:k.requestHead("+k.CI+") )", fmt.Sprintf("RCVD (304) %s in %dms", k.URL, getMetric("HEAD:"+k.CI)))
-		//k.print()
+		//k.print("")
 	}
 
 	if resp.StatusCode == 200 || resp.StatusCode == 304 {

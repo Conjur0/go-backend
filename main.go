@@ -1,3 +1,11 @@
+//////////////////////////////////////////////////////////////////////////////////
+// main.go - Entry point, Universal methods
+//////////////////////////////////////////////////////////////////////////////////
+//	log(caller, message): Abstraction for all log messages; so they can be piped to alternate locations (IRC, SQL, /dev/null)
+//  ktime(): Source for the time format used throughout (unixtime*1000)
+//  safeMove(src, dst): OS-Independant safe file move
+//  main(): Hello World!
+
 package main
 
 import (
@@ -17,14 +25,9 @@ var logMutex = sync.RWMutex{}
 var client http.Client
 
 func log(caller string, message interface{}) {
-	logMutex.Lock()
-	fmt.Printf("%.3f [%s] ", float64(ktime())/1000, caller)
-	fmt.Println(message)
-	logMutex.Unlock()
+	fmt.Printf("%.3f [%s] %s\n", float64(ktime())/1000, caller, message)
 }
-func ktime() int64 {
-	return time.Now().UnixNano() / int64(time.Millisecond)
-}
+func ktime() int64 { return time.Now().UnixNano() / int64(time.Millisecond) }
 
 func safeMove(src string, dst string) {
 	os.Remove(dst + ".bak")
@@ -37,7 +40,7 @@ func safeMove(src string, dst string) {
 }
 
 func main() {
-	log("main.go:main()", "Hello World")
+	log("main.go:main()", "Hello World!")
 	spec = make(map[string]interface{})
 	etag = make(map[string]map[string]string)
 	metrics = make(map[string]int64)

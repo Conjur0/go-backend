@@ -1,3 +1,11 @@
+//////////////////////////////////////////////////////////////////////////////////
+// spec.go - ESI swagger.json Maintenance
+//////////////////////////////////////////////////////////////////////////////////
+//  lWritespec(obj, specc):  Updates `spec[]`
+//  updateSpec():  Loads `spec/v*.json` into `spec[]`
+//  getSpec(fName):  Checks age, and if neccessary, downloads updated swagger.json
+//  readSpec(obj):  Loads spec/`obj`.json into `spec[]`
+
 package main
 
 import (
@@ -23,7 +31,6 @@ func lWritespec(obj string, specc interface{}) {
 	//log("spec.go:lWritespec()", fmt.Sprintf("set spec[%s] to %s", obj, specc))
 	specMutex.Unlock()
 }
-
 func updateSpec() {
 	//Open spec folder
 	dir, err := os.Open("spec/")
@@ -102,7 +109,6 @@ func getSpec(fName string) {
 		log("spec.go:getSpec("+fName+")", fmt.Sprintf("RCVD (304) %s in %dms", downloadPath, getMetric(downloadPath)))
 	}
 }
-
 func readSpec(obj string) {
 	addMetric("spec/" + obj + ".json")
 	jsonFile, err := os.Open("spec/" + obj + ".json")

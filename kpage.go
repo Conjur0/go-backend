@@ -1,3 +1,14 @@
+//////////////////////////////////////////////////////////////////////////////////
+// kpage.go - ESI Page Loading
+//////////////////////////////////////////////////////////////////////////////////
+//  kpageQueueS.Push(element):  Adds element to the FIFO queue
+//  kpageQueueS.Pop():  Returns the oldest element from the queue
+//  gokpageQueueTick(t):  Timer tick function
+//  kpageQueueInit(): Timer/Queue Init (called once from main)
+//  kjob.newPage(page): Queues page on behalf of kjob
+//  curInFlightmm(): Silly Mechanics (defer cal for decrementing curInFlight)
+//  kpage.requestPage(): Launches kpage request
+
 package main
 
 import (
@@ -19,13 +30,12 @@ var errorResetTimer time.Ticker
 
 var backoff = false
 
-var maxInFlight = 120
+var maxInFlight = 10
 var curInFlight = 0
 
 type kpageQueueS struct {
 	elements chan kpage
 }
-
 type kpage struct {
 	job  *kjob
 	page uint16
@@ -42,7 +52,6 @@ func (kpageQueueS *kpageQueueS) Push(element *kpage) {
 		panic("Queue full")
 	}
 }
-
 func (kpageQueueS *kpageQueueS) Pop() *kpage {
 	select {
 	case e := <-kpageQueueS.elements:
@@ -55,7 +64,6 @@ func (kpageQueueS *kpageQueueS) Pop() *kpage {
 	return &kpage{}
 	//return nil
 }
-
 func gokpageQueueTick(t time.Time) {
 
 	if kpageQueueLen > 0 && curInFlight < maxInFlight && !backoff {
@@ -70,7 +78,6 @@ func gokpageQueueTick(t time.Time) {
 		//fmt.Println(qitem)
 	}
 }
-
 func kpageQueueInit() {
 	kpageQueue = &kpageQueueS{
 		elements: make(chan kpage, 8192),
@@ -83,7 +90,6 @@ func kpageQueueInit() {
 	}()
 	log("kpage.go:kpageQueueInit()", "Timer Initialized!")
 }
-
 func (k *kjob) newPage(page uint16) {
 	tmp := kpage{
 		job:  k,
@@ -96,7 +102,6 @@ func (k *kjob) newPage(page uint16) {
 func curInFlightmm() {
 	curInFlight--
 }
-
 func (k *kpage) requestPage() {
 	defer curInFlightmm()
 	addMetric(k.cip)
