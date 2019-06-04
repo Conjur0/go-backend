@@ -26,6 +26,7 @@ import (
 )
 
 var kjobStack = make(map[int]*kjob, 4096)
+var kjobStackMutex = sync.RWMutex{}
 var kjobQueueLen int
 var kjobQueueProcessed int
 var kjobQueueFinished int
@@ -47,11 +48,13 @@ func kjobQueueInit() {
 }
 func gokjobQueueTick(t time.Time) {
 	nowtime := ktime()
+	kjobStackMutex.Lock()
 	for itt := range kjobStack {
 		if kjobStack[itt].running == false && kjobStack[itt].NextRun < nowtime {
 			go kjobStack[itt].start()
 		}
 	}
+	kjobStackMutex.Unlock()
 }
 
 type kjob struct {
@@ -145,7 +148,8 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 		CI:       fmt.Sprintf("%s|%s", endpoint, ciString),
 		Cache:    cac * 1000,
 		Security: ecurity,
-		mutex:    sync.RWMutex{}}
+		mutex:    sync.RWMutex{},
+		page:     make(map[uint16]*kpage)}
 	for se, sed := range entity {
 		tmp.URL = strings.Replace(tmp.URL, "{"+se+"}", sed, -1)
 	}
@@ -156,16 +160,15 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 		}
 	}()
 	//tmp.insIds = make([]int64, 1048576)
+	kjobStackMutex.Lock()
 	kjobStack[kjobQueueLen] = &tmp
 	kjobQueueLen++
+	kjobStackMutex.Unlock()
 }
 func (k *kjob) beat() {
 	k.print("ZOMBIE")
-	for it := range k.page {
-		k.page[it].dead = true
-	}
 	k.mutex.Lock()
-	k.stop()
+	k.stop(true)
 	k.mutex.Unlock()
 	kjobQueueFinished--
 	k.start()
@@ -201,10 +204,13 @@ func (k *kjob) start() {
 	k.mutex.Unlock()
 	k.run()
 }
-func (k *kjob) stop() {
+func (k *kjob) stop(zombie bool) {
 	//todo: final sql write, store metrics
 	//k.mutex.Lock() **Should be locked in a wrapper around the call to this.
 	k.heart.Stop()
+	for it := range k.page {
+		k.page[it].destroy()
+	}
 	k.running = false
 	kjobQueueFinished++
 	// k.print("k.stop()")
@@ -319,7 +325,7 @@ func (k *kjob) requestHead() {
 		if timepct < minCachePct {
 			log("kjob.go:k.requestHead("+k.CI+") )", k.CI+" expires too soon, recycling!")
 			k.mutex.Lock()
-			k.stop()
+			k.stop(false)
 			k.mutex.Unlock()
 			return
 		}
@@ -332,7 +338,7 @@ func (k *kjob) requestHead() {
 			}
 
 		}
-		log("kjob.go:k.requestHead("+k.CI+") )", fmt.Sprintf("RCVD (%d) HEAD(%d) %s in %dms", resp.StatusCode, k.Pages, k.URL, getMetric("HEAD:"+k.CI)))
+		//log("kjob.go:k.requestHead("+k.CI+") )", fmt.Sprintf("RCVD (%d) HEAD(%d) %s in %dms", resp.StatusCode, k.Pages, k.URL, getMetric("HEAD:"+k.CI)))
 		go k.run()
 	}
 
