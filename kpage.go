@@ -30,7 +30,7 @@ var errorResetTimer time.Ticker
 
 var backoff = false
 
-var maxInFlight = 10
+var maxInFlight = 5
 var curInFlight = 0
 
 type kpageQueueS struct {
@@ -42,6 +42,7 @@ type kpage struct {
 	cip  string
 	body []byte
 	req  *http.Request
+	dead bool
 }
 
 func (kpageQueueS *kpageQueueS) Push(element *kpage) {
@@ -69,8 +70,10 @@ func gokpageQueueTick(t time.Time) {
 	if kpageQueueLen > 0 && curInFlight < maxInFlight && !backoff {
 	Start:
 		qitem := kpageQueue.Pop()
-		curInFlight++
-		go qitem.requestPage()
+		if qitem.dead == false {
+			curInFlight++
+			go qitem.requestPage()
+		}
 		//log("kpage.go:gokpageQueueTick()", fmt.Sprintf("Got page %s, %d remaining, %d processed", qitem.cip, kpageQueueLen, kpageQueueProcessed))
 		if kpageQueueLen > 0 && curInFlight < maxInFlight && !backoff {
 			goto Start
@@ -97,6 +100,7 @@ func (k *kjob) newPage(page uint16) {
 		cip:  fmt.Sprintf("%s|%d", k.CI, page)}
 	kpageQueue.Push(&tmp)
 	k.PagesQueued++
+	k.page[k.PagesQueued] = &tmp
 	//log("kpage.go:newPage()", "Queued page "+tmp.cip)
 }
 func curInFlightmm() {
@@ -104,6 +108,9 @@ func curInFlightmm() {
 }
 func (k *kpage) requestPage() {
 	defer curInFlightmm()
+	if k.dead {
+		return
+	}
 	addMetric(k.cip)
 	if backoff {
 		kpageQueue.Push(k)
@@ -129,6 +136,10 @@ func (k *kpage) requestPage() {
 	resp, err := client.Do(k.req)
 	if err != nil {
 		log("kpage.go:k.requestPage("+k.cip+") client.Do", err)
+		kpageQueue.Push(k)
+		return
+	}
+	if k.dead {
 		return
 	}
 	k.job.APICalls++
@@ -149,7 +160,7 @@ func (k *kpage) requestPage() {
 	*/
 	defer resp.Body.Close()
 
-	k.job.heart.Reset(30 * time.Second)
+	//k.job.heart.Reset(30 * time.Second)
 
 	if resp.StatusCode == 200 {
 		var err error
@@ -192,7 +203,6 @@ func (k *kpage) requestPage() {
 			k.job.stop()
 		}
 		k.job.mutex.Unlock()
-		//todo: call kjobIsDone() ... and write it.
 	} else {
 		kpageQueue.Push(k)
 		k.job.APIErrors++

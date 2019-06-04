@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"sync"
 	"time"
 
 	"golang.org/x/net/http2"
@@ -21,7 +20,6 @@ import (
 
 const esiURL = "https://esi.evetech.net"
 
-var logMutex = sync.RWMutex{}
 var client http.Client
 
 func log(caller string, message interface{}) {

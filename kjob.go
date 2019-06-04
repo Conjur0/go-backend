@@ -85,20 +85,18 @@ type kjob struct {
 	PagesProcessed uint16 `json:"pagesProcessed"` //count of completed pages (excluding heads)
 	PagesQueued    uint16 `json:"pagesQueued"`    //cumlative count of pages queued
 
-	/*
-		Records      uint16 `json:"records"`      //cumlative count of records
-		ChangedRows  uint16 `json:"changedRows"`  //cumlative count of changed records
-		AffectedRows uint16 `json:"affectedRows"` //cumlative count of affected records
-		RemovedRows  uint16 `json:"removedRows"`  //cumlative count of removed records
-		QueriesDone  uint16 `json:"queries_done"` //cumlative count of completed SQL Queries
-		Queries      uint16 `json:"queries"`      //cumlative count of fired SQL Queries
-	*/
-	heart       *time.Timer   //heartbeat timer
-	req         *http.Request //http request
-	running     bool
-	mutex       sync.RWMutex
-	Runs        int `json:"runs"`
-	NumInFlight int `json:"numInFlight"`
+	Records      uint16        `json:"records"`      //cumlative count of records
+	ChangedRows  uint16        `json:"changedRows"`  //cumlative count of changed records
+	AffectedRows uint16        `json:"affectedRows"` //cumlative count of affected records
+	RemovedRows  uint16        `json:"removedRows"`  //cumlative count of removed records
+	QueriesDone  uint16        `json:"queries_done"` //cumlative count of completed SQL Queries
+	Queries      uint16        `json:"queries"`      //cumlative count of fired SQL Queries
+	Runs         int           `json:"runs"`
+	heart        *time.Timer   //heartbeat timer
+	req          *http.Request //http request
+	running      bool
+	mutex        sync.RWMutex
+	page         map[uint16]*kpage
 }
 
 func newKjob(method string, specnum string, endpoint string, entity map[string]string, pages uint16) {
@@ -139,6 +137,7 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 		Spec:     specnum,
 		Endpoint: endpoint,
 		Entity:   entity,
+		Token:    "none",
 		Pages:    pages,
 		PullType: pages,
 		URL:      fmt.Sprintf("%s%s?datasource=tranquility", specnum, endpoint),
@@ -161,22 +160,36 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 	kjobQueueLen++
 }
 func (k *kjob) beat() {
-	//log("kjob.go:k.beat()", k.CI+" ZOMBIE!")
 	k.print("ZOMBIE")
-	k.heart.Reset(30 * time.Second)
+	for it := range k.page {
+		k.page[it].dead = true
+	}
+	k.mutex.Lock()
+	k.stop()
+	k.mutex.Unlock()
+	kjobQueueFinished--
+	k.start()
 }
 func (k *kjob) print(msg string) {
 	// jsonData, err := json.MarshalIndent(&k, "", "    ")
 	// if err != nil {
 	// 	panic(err)
 	// }
-	log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s cache:%.0f security:%s token:%s nextRun:%d, expires:%d, expires_in:%.0f APICalls:%d, APICache:%d, APIErrors:%d bytesDownloaded:%d, bytesCached: %d PullType:%d, Pages:%d, pagesProcessed:%d, pagesQueued:%d, runs:%d, numInFlight:%d kjobQueue Len:%d Processed:%d Finished:%d Runtime:%dms",
+	// log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s cache:%.0f security:%s token:%s nextRun:%d, expires:%d, expires_in:%.0f APICalls:%d, APICache:%d, APIErrors:%d bytesDownloaded:%d, bytesCached: %d PullType:%d, Pages:%d, pagesProcessed:%d, pagesQueued:%d, runs:%d, kjobQueue Len:%d Processed:%d Finished:%d Runtime:%dms",
+	// 	k.Method, k.CI,
+	// 	k.Cache, k.Security, k.Token,
+	// 	k.NextRun, k.Expires, k.ExpiresIn,
+	// 	k.APICalls, k.APICache, k.APIErrors,
+	// 	k.BytesDownloaded, k.BytesCached,
+	// 	k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs,
+	// 	kjobQueueLen, kjobQueueProcessed, kjobQueueFinished, getMetric(k.CI)))
+	log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s %.0f %s %s %d %d %.0f %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
 		k.Method, k.CI,
 		k.Cache, k.Security, k.Token,
 		k.NextRun, k.Expires, k.ExpiresIn,
 		k.APICalls, k.APICache, k.APIErrors,
 		k.BytesDownloaded, k.BytesCached,
-		k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs, k.NumInFlight,
+		k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs,
 		kjobQueueLen, kjobQueueProcessed, kjobQueueFinished, getMetric(k.CI)))
 }
 func (k *kjob) start() {
@@ -186,7 +199,6 @@ func (k *kjob) start() {
 	k.Runs++
 	addMetric(k.CI)
 	k.mutex.Unlock()
-	k.NumInFlight++
 	k.run()
 }
 func (k *kjob) stop() {
@@ -195,7 +207,6 @@ func (k *kjob) stop() {
 	k.heart.Stop()
 	k.running = false
 	kjobQueueFinished++
-	k.NumInFlight--
 	// k.print("k.stop()")
 	k.Token = "none"
 	k.Ins = []string{}
@@ -208,18 +219,16 @@ func (k *kjob) stop() {
 	k.Pages = k.PullType
 	k.PagesProcessed = 0
 	k.PagesQueued = 0
-	/*
-		k.Records = 0
-		k.ChangedRows = 0
-		k.AffectedRows = 0
-		k.RemovedRows = 0
-		k.QueriesDone = 0
-		k.Queries = 0
-	*/
+	k.Records = 0
+	k.ChangedRows = 0
+	k.AffectedRows = 0
+	k.RemovedRows = 0
+	k.QueriesDone = 0
+	k.Queries = 0
 	//k.mutex.Unlock()
 }
 func (k *kjob) run() {
-	k.heart.Reset(30 * time.Second)
+	//k.heart.Reset(30 * time.Second)
 	if k.Security != "none" && len(k.Token) < 5 {
 		log("kjob.go:k.run() "+k.CI, "todo: get token.")
 		return
@@ -244,7 +253,7 @@ func (k *kjob) queuePages() {
 func (k *kjob) requestHead() {
 	//log("kjob.go:k.requestHead("+k.CI+")", "requesting head "+k.CI)
 	addMetric("HEAD:" + k.CI)
-	k.heart.Reset(30 * time.Second)
+	//k.heart.Reset(30 * time.Second)
 	k.APICalls++
 	if backoff {
 		time.Sleep(5 * time.Second)
