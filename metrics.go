@@ -19,9 +19,9 @@ func addMetric(obj string) {
 	metricsMutex.Unlock()
 }
 func getMetric(obj string) int {
-	metricsMutex.RLock()
+	metricsMutex.Lock()
 	v, ok := metrics[obj]
-	metricsMutex.RUnlock()
+	metricsMutex.Unlock()
 	if ok {
 		return int(ktime() - v)
 	}

@@ -140,14 +140,12 @@ func kpageQueueInit() {
 	log("kpage.go:kpageQueueInit()", "Timer Initialized!")
 }
 func (k *kjob) newPage(page uint16) {
-	k.mutex.Lock()
 	k.PagesQueued++
 	k.page[page] = &kpage{
 		job:  k,
 		page: page,
 		cip:  fmt.Sprintf("%s|%d", k.CI, page)}
 	kpageQueue.Push(k.page[page])
-	k.mutex.Unlock()
 }
 func (k *kpage) destroy() {
 	if k.running > 0 {
@@ -194,8 +192,8 @@ func (k *kpage) requestPage() {
 		log("kpage.go:k.requestPage("+k.cip+") client.Do", err)
 		k.job.mutex.Lock()
 		k.job.PagesQueued--
-		k.job.mutex.Unlock()
 		k.job.newPage(k.page)
+		k.job.mutex.Unlock()
 		return
 	}
 	defer resp.Body.Close()
@@ -230,8 +228,8 @@ func (k *kpage) requestPage() {
 			log("kpage.go:k.requestPage("+k.cip+") ioutil.ReadAll", err)
 			k.job.mutex.Lock()
 			k.job.PagesQueued--
-			k.job.mutex.Unlock()
 			k.job.newPage(k.page)
+			k.job.mutex.Unlock()
 		}
 		if _, ok := resp.Header["Etag"]; ok {
 			go setEtag(k.cip, resp.Header["Etag"][0], k.body)
@@ -291,8 +289,8 @@ func (k *kpage) requestPage() {
 		k.job.mutex.Lock()
 		k.job.APIErrors++
 		k.job.PagesQueued--
-		k.job.mutex.Unlock()
 		k.job.newPage(k.page)
+		k.job.mutex.Unlock()
 	}
 }
 func (k *kpage) writeData() {
