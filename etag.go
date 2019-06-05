@@ -23,16 +23,21 @@ func getEtag(cip string) string {
 	return data
 }
 
-func getEtagData(tag string) []byte {
-	data, err := redisClient.Get("etag:" + tag).Result()
+func getEtagData(cip string) []byte {
+	data, err := redisClient.Get("etag:" + cip).Result()
 	if err != nil {
 		return []byte("")
 	}
-	go redisClient.Expire("etag:"+tag, 1*time.Hour).Result()
+	go redisClient.Expire("etag:"+cip, 1*time.Hour).Result()
 	return []byte(data)
 }
 
 func setEtag(cip string, tag string, value []byte) {
 	redisClient.SetNX("cip:"+cip, tag, 1*time.Hour).Err()
-	redisClient.SetNX("etag:"+tag, value, 1*time.Hour).Err()
+	redisClient.SetNX("etag:"+cip, value, 1*time.Hour).Err()
+}
+
+func killEtag(cip string) {
+	redisClient.Del("cip:" + cip).Err()
+	redisClient.Del("etag:" + cip).Err()
 }

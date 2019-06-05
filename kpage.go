@@ -31,12 +31,16 @@ var errorResetTimer *time.Ticker
 
 var backoff = false
 
-var maxInFlight = 18
+var maxInFlight = 20
 var curInFlight = 0
 var inFlight = make(map[int]*kpage, maxInFlight)
 var inFlightMutex = sync.RWMutex{}
 var pagesFired = 0
 var pagesFinished = 0
+var bCached = 0
+var bDownload = 0
+var rCached = 0
+var rDownload = 0
 
 type kpageQueueS struct {
 	elements chan *kpage
@@ -122,13 +126,13 @@ func kpageQueueInit() {
 			kpageQueueMutex.Unlock()
 			if fff > 0 {
 				timenow := ktime()
-				entry := fmt.Sprintf("Queue:%6d Fired:%6d Finished:%6d Hot: %3d of %3d  ", fff, pagesFired, pagesFinished, curInFlight, maxInFlight)
+				entry := fmt.Sprintf("%12d/%12d(%5d/%5d) Q:%6d Fired:%6d Done:%6d Hot(%3d of %3d)  ", bCached, bDownload, rCached, rDownload, fff, pagesFired, pagesFinished, curInFlight, maxInFlight)
 				inFlightMutex.Lock()
 				for it := range inFlight {
 					if inFlight[it].dead {
-						entry = entry + "******* "
+						entry = entry + "**** "
 					} else {
-						entry = entry + fmt.Sprintf("%7d ", timenow-inFlight[it].running)
+						entry = fmt.Sprintf("%s%4d ", entry, timenow-inFlight[it].running)
 					}
 				}
 				inFlightMutex.Unlock()
@@ -232,20 +236,26 @@ func (k *kpage) requestPage() {
 			k.job.mutex.Unlock()
 		}
 		if _, ok := resp.Header["Etag"]; ok {
-			go setEtag(k.cip, resp.Header["Etag"][0], k.body)
+			setEtag(k.cip, resp.Header["Etag"][0], k.body)
 		}
+		rDownload++
+		bDownload += len(k.body)
 		k.job.mutex.Lock()
 		k.job.BytesDownloaded += len(k.body)
 		k.job.mutex.Unlock()
 	} else if resp.StatusCode == 304 {
 		k.body = getEtagData(k.cip)
 		if len(k.body) == 0 {
+			log("kpage.go:k.requestPage("+k.cip+") getEtagData", "No Data returned!")
+			killEtag(k.cip)
 			k.job.mutex.Lock()
 			k.job.PagesQueued--
 			k.job.newPage(k.page)
 			k.job.mutex.Unlock()
 			return
 		}
+		rCached++
+		bCached += len(k.body)
 		k.job.mutex.Lock()
 		k.job.BytesCached += len(k.body)
 		k.job.APICache++
