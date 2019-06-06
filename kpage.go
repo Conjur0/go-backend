@@ -278,14 +278,19 @@ func (k *kpage) requestPage() {
 					}
 				}
 			}
-
 		}
 
 		if k.dead {
 			return
 		}
 
-		//k.writeData()
+		if k.writeData() {
+			k.job.mutex.Lock()
+			k.job.APIErrors++
+			k.job.PagesQueued--
+			k.job.newPage(k.page)
+			k.job.mutex.Unlock()
+		}
 		k.job.mutex.Lock()
 		k.job.PagesProcessed++
 		if k.job.PagesProcessed == k.job.Pages {
@@ -303,7 +308,7 @@ func (k *kpage) requestPage() {
 		k.job.mutex.Unlock()
 	}
 }
-func (k *kpage) writeData() {
+func (k *kpage) owriteData() {
 	outFile := fmt.Sprintf("tmp/%s_%d.json", k.job.Entity["region_id"], k.page)
 	out, err := os.Create(outFile + ".tmp")
 	if err != nil {
@@ -319,4 +324,21 @@ func (k *kpage) writeData() {
 	out.Close()
 	safeMove(outFile+".tmp", outFile)
 
+}
+
+func (k *kpage) writeData() bool {
+	if k.job.Ins == nil {
+		k.job.Ins = make([]string, k.job.Pages)
+		log("kpage.go:k.requestPage("+k.cip+") k.job.Ins", fmt.Sprintf("IS NULL! Set to %d (len:%d,cap:%d)", k.job.Pages, len(k.job.Ins), cap(k.job.Ins)))
+	}
+	if k.job.InsIds == nil {
+		k.job.InsIds = make([]string, k.job.Pages)
+		log("kpage.go:k.requestPage("+k.cip+") k.job.InsIds", fmt.Sprintf("IS NULL! Set to %d (len:%d,cap:%d)", int(k.job.Pages)*k.job.MaxItems, len(k.job.InsIds), cap(k.job.InsIds)))
+	}
+	log("kpage.go:writeData("+k.cip+")", fmt.Sprintf("called with %db", len(k.body)))
+	if err := k.job.table.transform(k.job.table, k); err != nil {
+		return true
+	}
+
+	return false
 }

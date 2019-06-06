@@ -56,16 +56,18 @@ func main() {
 
 	kjobQueueInit()
 	kpageQueueInit()
+	initTables()
 
 	tock := time.NewTimer(3 * time.Second) // 3s
 	go func() {
 		for range tock.C {
 			//newKjob("get", "/v4", "/characters/{character_id}/skills/", map[string]string{"character_id": "1120048880"}, 0)
-			for i := 10000001; i < 10000070; i++ {
-				newKjob("get", "/v1", "/markets/{region_id}/orders/", map[string]string{"region_id": strconv.Itoa(i)}, 0)
+			//	for i := 10000059; i < 10000064; i++ {
+			for i := 10000062; i < 10000064; i++ {
+				newKjob("get", "/v1", "/markets/{region_id}/orders/", map[string]string{"region_id": strconv.Itoa(i)}, 0, tables["orders"])
 			}
 		}
 	}()
-
+	// log("table columnorder orders: ", tables["orders"].columnOrder())
 	select {}
 }

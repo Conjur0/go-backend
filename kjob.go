@@ -67,13 +67,13 @@ type kjob struct {
 
 	Security string `json:"security"` //Security: EVESSO Token required or "none"
 	Token    string `json:"token"`    //evesso access_token
+	MaxItems int    `json:"maxItems"`
 
-	Ins    []string `json:"ins"`    //array of data waiting to be processed by sql
-	InsIds []uint64 `json:"insIds"` //array of ids seen in this request (ones not here will be purged from sql upon completion of request)
-
-	NextRun   int64   `json:"nextRun"`
-	Expires   int64   `json:"expires"`    //milliseconds since 1970, when cache miss will occur
-	ExpiresIn float64 `json:"expires_in"` //milliseconds until expiration, at completion of first page (or head) pulled
+	Ins       []string `json:"ins"`    //array of data waiting to be processed by sql
+	InsIds    []string `json:"insIds"` //array of ids seen in this request (ones not here will be purged from sql upon completion of request)
+	NextRun   int64    `json:"nextRun"`
+	Expires   int64    `json:"expires"`    //milliseconds since 1970, when cache miss will occur
+	ExpiresIn float64  `json:"expires_in"` //milliseconds until expiration, at completion of first page (or head) pulled
 
 	APICalls  uint16 `json:"apiCalls"`  //count of API Calls (including head, errors, etc)
 	APICache  uint16 `json:"apiCache"`  //count of 304 responses received
@@ -99,9 +99,10 @@ type kjob struct {
 	running      bool
 	mutex        sync.RWMutex
 	page         map[uint16]*kpage
+	table        *table
 }
 
-func newKjob(method string, specnum string, endpoint string, entity map[string]string, pages uint16) {
+func newKjob(method string, specnum string, endpoint string, entity map[string]string, pages uint16, table *table) {
 	l1, ok := spec[specnum].(map[string]interface{})
 	if ok == false {
 		log("kjob.go:newKjob()", "Invalid job received: SPEC "+specnum+" invalid")
@@ -134,6 +135,10 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 		return
 	}
 	ciString, _ := json.Marshal(entity)
+	axItems := 1
+	if xItems, ok := tspec["responses"].(map[string]interface{})["200"].(map[string]interface{})["schema"].(map[string]interface{})["maxItems"].(float64); ok {
+		axItems = int(xItems)
+	}
 	tmp := kjob{
 		Method:   method,
 		Spec:     specnum,
@@ -147,8 +152,10 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 		CI:       fmt.Sprintf("%s|%s", endpoint, ciString),
 		Cache:    cac * 1000,
 		Security: ecurity,
+		MaxItems: axItems,
 		mutex:    sync.RWMutex{},
-		page:     make(map[uint16]*kpage)}
+		page:     make(map[uint16]*kpage),
+		table:    table}
 	for se, sed := range entity {
 		tmp.URL = strings.Replace(tmp.URL, "{"+se+"}", sed, -1)
 	}
