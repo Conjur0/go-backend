@@ -218,7 +218,8 @@ func (k *kjob) stop(zombie bool) {
 	}
 	k.running = false
 	k.Token = "none"
-	k.Ins = []string{}
+	k.Ins = nil
+	k.InsIds = nil
 	k.Expires = 0
 	k.APICalls = 0
 	k.APICache = 0

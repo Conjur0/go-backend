@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -81,12 +82,12 @@ func initTables() {
 
 			length := len(jsonData)
 			fmt.Printf("Processing %d Records entity:%s, owner:%s...\n", length, entity, owner)
-			var ins = ""
-			var insIds = ""
+			var ins strings.Builder
+			var insIds strings.Builder
 			comma := ","
 			length--
 			for it := range jsonData {
-				fmt.Printf("Record %d of %d: order_id:%d    ", it, length, jsonData[it].OrderID)
+				fmt.Printf("Record %d of %d: order_id:%d\n", it, length, jsonData[it].OrderID)
 				if length == it {
 					comma = ""
 				}
@@ -100,7 +101,7 @@ func initTables() {
 				if jsonData[it].IsBuyOrder {
 					ibo = 1
 				}
-				out := fmt.Sprintf("(%s,%s,%d,%d,%d,%d,%d,%d,%f,'%s',%d,%d,%d)%s",
+				fmt.Fprintf(&ins, "(%s,%s,%d,%d,%d,%d,%d,%d,%f,'%s',%d,%d,%d)%s",
 					entity,
 					owner,
 					jsonData[it].Duration,
@@ -116,9 +117,7 @@ func initTables() {
 					jsonData[it].VolumeTotal,
 					comma,
 				)
-				ins = ins + out
-				insIds = fmt.Sprintf("%s%d%s", insIds, jsonData[it].OrderID, comma)
-				fmt.Printf("PARSED: %s\n", out)
+				fmt.Fprintf(&insIds, "%d%s", jsonData[it].OrderID, comma)
 			}
 			/*
 				transform: (d, treq) => {
@@ -128,9 +127,9 @@ func initTables() {
 					${d.order_id},${d.price},'${d.range}',${d.type_id},${d.volume_remain},${d.volume_total}`;
 				},
 			*/
-			k.job.Ins[k.page-1] = ins
-			k.job.InsIds[k.page-1] = insIds
-			fmt.Printf("%s\n%s\n\n", ins, insIds)
+			k.job.Ins[k.page-1] = ins.String()
+			k.job.InsIds[k.page-1] = insIds.String()
+			fmt.Printf("%s\n%s\n\n", k.job.Ins[k.page-1], k.job.InsIds[k.page-1])
 			return nil
 		},
 		purge: func(t *table, k *kpage) string {
