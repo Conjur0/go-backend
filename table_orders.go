@@ -36,6 +36,7 @@ func tablesInitorders() {
 		primaryKey: "order_id",
 		respKey:    "order_id",
 		transform: func(t *table, k *kpage) error {
+			k.whatDo = "xform"
 			var jsonData orders
 			if err := json.Unmarshal(k.body, &jsonData); err != nil {
 				return err
@@ -43,9 +44,9 @@ func tablesInitorders() {
 			var entity string
 			var ok bool
 			owner := "NULL"
-			k.job.mutex.Lock()
+			k.job.LockJob("table_orders.go:47")
 			tmp := k.job.Entity
-			k.job.mutex.Unlock()
+			k.job.UnlockJob()
 
 			if entity, ok = tmp["region_id"]; !ok {
 				if entity, ok = tmp["structure_id"]; !ok {
@@ -56,13 +57,14 @@ func tablesInitorders() {
 					}
 				}
 			}
+			k.whatDo = "xform1"
 			length := len(jsonData)
-			k.mutex.Lock()
-			defer k.mutex.Unlock()
+			k.pageMutex.Lock()
 			k.Ins.Grow(length * 104)
 			k.InsIds.Grow(length * 11)
 			comma := ","
 			length--
+			k.whatDo = "xform2"
 			for it := range jsonData {
 				//fmt.Printf("Record %d of %d: order_id:%d\n", it, length, jsonData[it].OrderID)
 				if length == it {
@@ -79,13 +81,18 @@ func tablesInitorders() {
 				fmt.Fprintf(&k.Ins, "(%s,%s,%d,%d,%d,%d,%d,%d,%f,'%s',%d,%d,%d)%s", entity, owner, jsonData[it].Duration, ibo, issued.UnixNano()/int64(time.Millisecond), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, comma)
 				fmt.Fprintf(&k.InsIds, "%d%s", jsonData[it].OrderID, comma)
 			}
+			k.whatDo = "xform3"
 			if k.dead || !k.job.running {
 				return errors.New("transform finished a dead job")
 			}
 			k.InsReady = true
-			k.job.mutex.Lock()
+			k.pageMutex.Unlock()
+			k.job.LockJob("table_orders.go:90")
 			k.job.InsLength += length + 1
-			k.job.mutex.Unlock()
+			k.job.UnlockJob()
+			k.pageMutex.Lock()
+			defer k.pageMutex.Unlock()
+			k.whatDo = "xform4"
 			//fmt.Printf("%s\n%s\n\n", k.job.Ins[k.page-1], k.job.InsIds[k.page-1])
 			return nil
 		},

@@ -50,17 +50,18 @@ type kpageQueueS struct {
 	len      int
 }
 type kpage struct {
-	job      *kjob
-	page     uint16
-	cip      string
-	body     []byte
-	req      *http.Request
-	running  int64
-	dead     bool
-	mutex    sync.Mutex
-	Ins      strings.Builder
-	InsReady bool
-	InsIds   strings.Builder
+	job       *kjob
+	page      uint16
+	cip       string
+	body      []byte
+	req       *http.Request
+	running   int64
+	dead      bool
+	pageMutex sync.Mutex
+	Ins       strings.Builder
+	InsReady  bool
+	InsIds    strings.Builder
+	whatDo    string
 }
 
 func (kpageQueueS *kpageQueueS) Push(element *kpage) {
@@ -115,6 +116,7 @@ func gokpageQueueTick(t time.Time) {
 	}
 }
 func kpageQueueInit() {
+
 	kpageQueue = &kpageQueueS{
 		elements: make(chan *kpage, 8192),
 	}
@@ -139,16 +141,24 @@ func kpageQueueInit() {
 				lastFired = pagesFired
 				lastInFlight = curInFlight
 				entry := fmt.Sprintf("%12d/%12d(%5d/%5d) Q:%6d Fired:%6d Done:%6d Hot(%3d of %3d)  ", bCached, bDownload, rCached, rDownload, fff, lastFired, lastFinished, lastInFlight, c.MaxInFlight)
+				fntry := ""
+				gntry := ""
+				hntry := ""
 				inFlightMutex.Lock()
-				for it := range inFlight {
+				for it := 0; it < c.MaxInFlight; it++ {
+					fntry = fmt.Sprintf("%s%12s", fntry, inFlight[it].whatDo)
+					hntry = fmt.Sprintf("%s%11d ", hntry, inFlight[it].job.entity)
 					if inFlight[it].dead {
-						entry = entry + "**** "
+						gntry = gntry + "********** "
 					} else {
-						entry = fmt.Sprintf("%s%4d ", entry, timenow-inFlight[it].running)
+						gntry = fmt.Sprintf("%s%11d ", gntry, timenow-inFlight[it].running)
 					}
 				}
 				inFlightMutex.Unlock()
-				log("kpage.go:kpageQueueInit() seat Stats", entry)
+				log("<QUEUE>", entry)
+				log("       ", fntry)
+				log("       ", gntry)
+				log("       ", hntry)
 			}
 		}
 	}()
@@ -158,12 +168,14 @@ func kpageQueueInit() {
 func (k *kjob) newPage(page uint16) {
 	k.PagesQueued++
 	k.page[page] = &kpage{
-		job:  k,
-		page: page,
-		cip:  fmt.Sprintf("%s|%d", k.CI, page)}
+		job:    k,
+		page:   page,
+		cip:    fmt.Sprintf("%s|%d", k.CI, page),
+		whatDo: "created"}
 	kpageQueue.Push(k.page[page])
 }
 func (k *kpage) destroy() {
+	k.whatDo = "destroyed"
 	if k.running > 0 {
 		curInFlight--
 		k.running = 0
@@ -171,6 +183,7 @@ func (k *kpage) destroy() {
 	k.dead = true
 }
 func (k *kpage) requestPage() {
+	k.whatDo = "requestPage"
 	defer k.destroy()
 	if k.dead {
 		return
@@ -178,10 +191,10 @@ func (k *kpage) requestPage() {
 	addMetric(k.cip)
 	if backoff {
 		log("kpage.go:k.requestPage("+k.cip+") backoff", "backoff trigger")
-		k.job.mutex.Lock()
+		k.job.LockJob("kpage.go:194")
 		k.job.stopJob(false)
 		k.job.APIErrors++
-		k.job.mutex.Unlock()
+		k.job.UnlockJob()
 		return
 	}
 	etaghdr := getEtag(k.cip)
@@ -189,12 +202,13 @@ func (k *kpage) requestPage() {
 	req, err := http.NewRequest(strings.ToUpper(k.job.Method), esiURL+k.job.URL+"&page="+strconv.Itoa(int(k.page)), nil)
 	if err != nil {
 		log("kpage.go:k.requestPage("+k.cip+") http.NewRequest", err)
-		k.job.mutex.Lock()
+		k.job.LockJob("kpage.go:205")
 		k.job.stopJob(false)
 		k.job.APIErrors++
-		k.job.mutex.Unlock()
+		k.job.UnlockJob()
 		return
 	}
+	k.whatDo = "newRequest"
 	k.req = req
 	if len(etaghdr) > 0 {
 		k.req.Header.Add("If-None-Match", etaghdr)
@@ -207,20 +221,21 @@ func (k *kpage) requestPage() {
 	resp, err := client.Do(k.req)
 	if err != nil {
 		log("kpage.go:k.requestPage("+k.cip+") client.Do", err)
-		k.job.mutex.Lock()
+		k.job.LockJob("kpage.go:224")
 		k.job.PagesQueued--
 		k.job.newPage(k.page)
-		k.job.mutex.Unlock()
+		k.job.UnlockJob()
 		return
 	}
+	k.whatDo = "client.Do"
 
 	defer resp.Body.Close()
 	if k.dead {
 		return
 	}
-	k.job.mutex.Lock()
+	k.job.LockJob("kpage.go:236")
 	k.job.APICalls++
-	k.job.mutex.Unlock()
+	k.job.UnlockJob()
 	/*
 				TODO: re-add error_limit/backoff
 				      if (this.response_headers['x-esi-error-limit-remain'] && (this.response_headers[':status'] > 399)) {
@@ -244,36 +259,36 @@ func (k *kpage) requestPage() {
 		k.body, err = ioutil.ReadAll(resp.Body)
 		if err != nil {
 			log("kpage.go:k.requestPage("+k.cip+") ioutil.ReadAll", err)
-			k.job.mutex.Lock()
+			k.job.LockJob("kpage.go:262")
 			k.job.PagesQueued--
 			k.job.newPage(k.page)
-			k.job.mutex.Unlock()
+			k.job.UnlockJob()
 		}
 		if _, ok := resp.Header["Etag"]; ok {
 			setEtag(k.cip, resp.Header["Etag"][0], k.body)
 		}
 		rDownload++
 		bDownload += len(k.body)
-		k.job.mutex.Lock()
+		k.job.LockJob("kpage.go:272")
 		k.job.BytesDownloaded += len(k.body)
-		k.job.mutex.Unlock()
+		k.job.UnlockJob()
 	} else if resp.StatusCode == 304 {
 		k.body = getEtagData(k.cip)
 		if len(k.body) == 0 {
 			log("kpage.go:k.requestPage("+k.cip+") getEtagData", "No Data returned!")
 			killEtag(k.cip)
-			k.job.mutex.Lock()
+			k.job.LockJob("kpage.go:280")
 			k.job.PagesQueued--
 			k.job.newPage(k.page)
-			k.job.mutex.Unlock()
+			k.job.UnlockJob()
 			return
 		}
 		rCached++
 		bCached += len(k.body)
-		k.job.mutex.Lock()
+		k.job.LockJob("kpage.go:288")
 		k.job.BytesCached += len(k.body)
 		k.job.APICache++
-		k.job.mutex.Unlock()
+		k.job.UnlockJob()
 	}
 
 	if resp.StatusCode == 200 || resp.StatusCode == 304 {
@@ -284,9 +299,9 @@ func (k *kpage) requestPage() {
 			pgss, err := strconv.Atoi(pgs[0])
 			if err == nil {
 				if k.job.Pages != uint16(pgss) {
-					k.job.mutex.Lock()
+					k.job.LockJob("kpage.go:302")
 					k.job.Pages = uint16(pgss)
-					k.job.mutex.Unlock()
+					k.job.UnlockJob()
 					if k.job.Pages != k.job.PagesQueued {
 						k.job.queuePages()
 					}
@@ -297,22 +312,27 @@ func (k *kpage) requestPage() {
 		if k.dead {
 			return
 		}
+		k.whatDo = "writeData"
+
 		if k.writeData() {
-			k.job.mutex.Lock()
+			k.whatDo = "writeFail"
+			k.job.LockJob("kpage.go:319")
 			k.job.APIErrors++
 			k.job.PagesQueued--
 			k.job.newPage(k.page)
-			k.job.mutex.Unlock()
+			k.job.UnlockJob()
 		}
+		k.whatDo = "processPage"
+
 		go k.job.processPage()
 	} else {
 		log("kpage.go:k.requestPage("+k.cip+")", fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db in %dms", resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body), getMetric(k.cip)))
 
-		k.job.mutex.Lock()
+		k.job.LockJob("kpage.go:321")
 		k.job.APIErrors++
 		k.job.PagesQueued--
 		k.job.newPage(k.page)
-		k.job.mutex.Unlock()
+		k.job.UnlockJob()
 	}
 }
 
