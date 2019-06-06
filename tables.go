@@ -13,16 +13,16 @@ type table struct {
 	key          string
 	respKey      string
 	transform    func(t *table, k *kpage) error
-	purge        func(t *table, k *kpage) string
+	purge        func(t *table, k *kjob) (error, string)
 	_columnOrder []string
 	duplicates   string
 	proto        []string
-	strategy     func(t *table, k string) error
+	strategy     func(t *table, k *kjob) (error, string)
 }
 
-type Orders []OrdersElement
+type orders []ordersElement
 
-type OrdersElement struct {
+type ordersElement struct {
 	Duration     uint32  `json:"duration"`
 	IsBuyOrder   bool    `json:"is_buy_order"`
 	Issued       string  `json:"issued"`
@@ -55,85 +55,74 @@ var tables = make(map[string]*table)
 
 func initTables() {
 	tables["orders"] = &table{
-		name:    "orders",
+		name:    "k.orders",
 		key:     "order_id",
 		respKey: "order_id",
 		transform: func(t *table, k *kpage) error {
 			//return t.name + " transform function output: "
-			var jsonData Orders
+			var jsonData orders
 			if err := json.Unmarshal(k.body, &jsonData); err != nil {
-				log("tables.go:orders->transform("+k.cip+") json.Unmarshal", err)
 				return err
 			}
 			var entity string
 			var ok bool
 			owner := "NULL"
 			if entity, ok = k.job.Entity["region_id"]; !ok {
-				if entity, ok = k.job.Entity["character_id"]; !ok {
-					if entity, ok = k.job.Entity["structure_id"]; !ok {
-						err := errors.New("unable to resolve entity")
-						log("tables.go:orders->transform("+k.cip+") resolve entity", err)
-						return err
+				if entity, ok = k.job.Entity["structure_id"]; !ok {
+					if entity, ok = k.job.Entity["character_id"]; !ok {
+						return errors.New("unable to resolve entity")
+					} else {
+						owner = entity
 					}
-				} else {
-					owner = entity
 				}
 			}
 
 			length := len(jsonData)
-			fmt.Printf("Processing %d Records entity:%s, owner:%s...\n", length, entity, owner)
 			var ins strings.Builder
 			var insIds strings.Builder
 			comma := ","
 			length--
 			for it := range jsonData {
-				fmt.Printf("Record %d of %d: order_id:%d\n", it, length, jsonData[it].OrderID)
+				//fmt.Printf("Record %d of %d: order_id:%d\n", it, length, jsonData[it].OrderID)
 				if length == it {
 					comma = ""
 				}
 				issued, err := time.Parse("2006-01-02T15:04:05Z", jsonData[it].Issued)
 				if err != nil {
-					err := errors.New("unable to parse issued time")
-					log("tables.go:orders->transform("+k.cip+") parse issued time", err)
-					return err
+					return errors.New("unable to parse issued time")
 				}
 				var ibo int8
 				if jsonData[it].IsBuyOrder {
 					ibo = 1
 				}
-				fmt.Fprintf(&ins, "(%s,%s,%d,%d,%d,%d,%d,%d,%f,'%s',%d,%d,%d)%s",
-					entity,
-					owner,
-					jsonData[it].Duration,
-					ibo,
-					issued.UnixNano()/int64(time.Millisecond),
-					jsonData[it].LocationID,
-					jsonData[it].MinVolume,
-					jsonData[it].OrderID,
-					jsonData[it].Price,
-					jsonData[it].Range,
-					jsonData[it].TypeID,
-					jsonData[it].VolumeRemain,
-					jsonData[it].VolumeTotal,
-					comma,
-				)
+				fmt.Fprintf(&ins, "(%s,%s,%d,%d,%d,%d,%d,%d,%f,'%s',%d,%d,%d)%s", entity, owner, jsonData[it].Duration, ibo, issued.UnixNano()/int64(time.Millisecond), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, comma)
 				fmt.Fprintf(&insIds, "%d%s", jsonData[it].OrderID, comma)
 			}
-			/*
-				transform: (d, treq) => {
-					let ibo = d.is_buy_order ? 1 : 0;
-					let min = d.min_volume ? d.min_volume : 0;
-					return `${treq.entity},${treq.char_id > 0 ? treq.char_id : 'NULL'},${d.duration},${ibo},UNIX_TIMESTAMP(STR_TO_DATE('${d.issued}','%Y-%m-%dT%H:%i:%sZ')),${d.location_id},${min},
-					${d.order_id},${d.price},'${d.range}',${d.type_id},${d.volume_remain},${d.volume_total}`;
-				},
-			*/
 			k.job.Ins[k.page-1] = ins.String()
 			k.job.InsIds[k.page-1] = insIds.String()
 			fmt.Printf("%s\n%s\n\n", k.job.Ins[k.page-1], k.job.InsIds[k.page-1])
 			return nil
 		},
-		purge: func(t *table, k *kpage) string {
-			return fmt.Sprintf("source = %s AND NOT order_id IN (%s)", k, k)
+		purge: func(t *table, k *kjob) (error, string) {
+			var entity string
+			var ok bool
+			if entity, ok = k.Entity["region_id"]; !ok {
+				if entity, ok = k.Entity["structure_id"]; !ok {
+					if entity, ok = k.Entity["character_id"]; !ok {
+						return errors.New("unable to resolve entity"), ""
+					}
+				}
+			}
+			var b strings.Builder
+			comma := ","
+			length := len(k.InsIds) - 1
+			for it := range k.InsIds {
+				if it == length {
+					comma = ""
+				}
+				fmt.Fprintf(&b, "%s%s", k.InsIds[it], comma)
+			}
+			return nil, fmt.Sprintf("source = %s AND NOT order_id IN (%s)", entity, b.String())
 
 		},
 		_columnOrder: []string{
