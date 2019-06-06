@@ -65,7 +65,7 @@ var tables = make(map[string]*table)
 
 func tablesInit() {
 	tablesInitorders()
-
+	tablesInitetag()
 	for it := range tables {
 		statement, err := database.Prepare(tables[it].create())
 		if err != nil {

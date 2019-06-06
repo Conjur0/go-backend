@@ -9,22 +9,22 @@
 
 package main
 
-import (
-	"github.com/go-redis/redis"
-)
+// import (
+// 	"github.com/go-redis/redis"
+// )
 
-var redisClient *redis.Client
+// var redisClient *redis.Client
 
-func redisInit() {
-	redisClient = redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "",
-		DB:       1,
-	})
-	pong, err := redisClient.Ping().Result()
-	if err != nil && pong == "PONG" {
-		panic("Unable to ping redis!")
-	}
-	log("redis.go:redisInit()", "Initialization Complete!")
+// func redisInit() {
+// 	redisClient = redis.NewClient(&redis.Options{
+// 		Addr:     "localhost:6379",
+// 		Password: "",
+// 		DB:       1,
+// 	})
+// 	pong, err := redisClient.Ping().Result()
+// 	if err != nil && pong == "PONG" {
+// 		panic("Unable to ping redis!")
+// 	}
+// 	log("redis.go:redisInit()", "Initialization Complete!")
 
-}
+// }

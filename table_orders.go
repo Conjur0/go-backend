@@ -1,5 +1,5 @@
 //////////////////////////////////////////////////////////////////////////////////
-// orders.go - `orders` table definition
+// table_orders.go - `orders` table definition
 //////////////////////////////////////////////////////////////////////////////////
 //
 package main
@@ -113,7 +113,7 @@ func tablesInitorders() {
 				if it == length {
 					comma = ""
 				}
-				if k.page[it].InsReady {
+				if k.page[it].InsReady && k.page[it].InsIds.Len() > 0 {
 					fmt.Fprintf(&b, "%s%s", k.page[it].InsIds.String(), comma)
 				} else {
 					log("table_orders.go:t.purge("+k.CI+")", "attempting to purge records with a non-ready page")

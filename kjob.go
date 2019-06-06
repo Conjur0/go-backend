@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-var minCachePct float64 = 10
+var minCachePct float64 = 50
 
 var kjobStack = make(map[int]*kjob, 4096)
 var kjobStackMutex = sync.RWMutex{}
@@ -90,8 +90,6 @@ type kjob struct {
 	ChangedRows      int           `json:"changedRows"`    //cumlative count of changed records
 	AffectedRows     int64         `json:"affectedRows"`   //cumlative count of affected records
 	RemovedRows      int64         `json:"removedRows"`    //cumlative count of removed records
-	QueriesDone      int           `json:"queries_done"`   //cumlative count of completed SQL Queries
-	Queries          int           `json:"queries"`        //cumlative count of fired SQL Queries
 	Runs             int           `json:"runs"`
 	heart            *time.Timer   //heartbeat timer
 	req              *http.Request //http request
@@ -175,7 +173,6 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 			tmp.beat()
 		}
 	}()
-	//tmp.insIds = make([]int64, 1048576)
 	kjobStackMutex.Lock()
 	kjobStack[kjobQueueLen] = &tmp
 	kjobQueueLen++
@@ -241,7 +238,8 @@ func (k *kjob) start() {
 func (k *kjob) stopJob(zombie bool) {
 	//todo: final sql write, store metrics
 	//k.mutex.Lock() **Should be locked in a wrapper around the call to this.
-	//log("kjob.go:k.stopJob("+k.CI+")", "job stopped")
+	log("kjob.go:k.stopJob("+k.CI+")", fmt.Sprintf("%t Pages:%d/%d Cached:%db DL:%db Records:%d Changed:%d Affected:%d Removed:%d ETRO: %dms", zombie, k.PagesProcessed, k.Pages, k.BytesCached, k.BytesDownloaded,
+		k.Records, k.ChangedRows, k.AffectedRows, k.RemovedRows, k.Expires-ktime()))
 	k.heart.Stop()
 	for it := range k.page {
 		k.page[it].destroy()
@@ -261,8 +259,6 @@ func (k *kjob) stopJob(zombie bool) {
 	k.ChangedRows = 0
 	k.AffectedRows = 0
 	k.RemovedRows = 0
-	k.QueriesDone = 0
-	k.Queries = 0
 	//k.mutex.Unlock()
 }
 func (k *kjob) run() {
@@ -336,7 +332,7 @@ func (k *kjob) requestHead() {
 
 	if resp.StatusCode == 200 {
 		if _, ok := resp.Header["Etag"]; ok {
-			go setEtag(k.CI, resp.Header["Etag"][0], []byte(""))
+			go setEtag(k.CI, resp.Header["Etag"][0], "head", "1")
 		}
 		//log("kjob.go:k.requestHead("+k.CI+") )", fmt.Sprintf("RCVD (200) %s in %dms", k.URL, getMetric("HEAD:"+k.CI)))
 		//k.print("")
@@ -390,6 +386,7 @@ func (k *kjob) updateExp(expire string) {
 }
 func (k *kjob) processPage() {
 	k.LockJob("kjob.go:386")
+	defer k.UnlockJob()
 	k.PagesProcessed++
 	pagesFinished++
 	if (k.InsLength >= 15000) || ((k.InsLength > 0) && k.PagesProcessed == k.Pages) {
@@ -398,11 +395,17 @@ func (k *kjob) processPage() {
 		comma := ""
 		for it := range k.page {
 			k.page[it].pageMutex.Lock()
-			if k.page[it].InsReady {
+			if k.page[it].InsReady && (k.page[it].Ins.Len() > 0) {
 				fmt.Fprintf(&b, "%s%s", comma, k.page[it].Ins.String())
+				k.page[it].Ins.Reset()
 				comma = ","
 			}
 			k.page[it].pageMutex.Unlock()
+		}
+		if b.Len() == 0 {
+			log("kjob.go:processPage()", "Memory read error")
+			k.stopJob(false)
+			return
 		}
 		query := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s",
 			k.table.database,
@@ -444,41 +447,38 @@ func (k *kjob) processPage() {
 	}
 
 	if k.PagesProcessed == k.Pages {
-		/*
-				var tries int
-				query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
-			Again2:
-				statement, err := database.Prepare(query)
-				if err != nil {
-					log("kpage.go:processPage("+k.CI+") database.Prepare", err)
-					log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
-					tries++
-					if tries < 11 {
-						time.Sleep(1 * time.Second)
-						goto Again2
-					}
-					panic(query)
-				} else {
-					res, err := statement.Exec()
-					if err != nil {
-						log("kpage.go:processPage("+k.CI+") statement.Exec", err)
-						log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
-						tries++
-						if tries < 11 {
-							time.Sleep(1 * time.Second)
-							goto Again2
-						}
-						panic(query)
-					} else {
-						add, _ := res.RowsAffected()
-						k.RemovedRows += add
-
-					}
+		var tries int
+		query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
+	Again2:
+		statement, err := database.Prepare(query)
+		if err != nil {
+			log("kpage.go:processPage("+k.CI+") database.Prepare", err)
+			log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
+			tries++
+			if tries < 11 {
+				time.Sleep(1 * time.Second)
+				goto Again2
+			}
+			panic(query)
+		} else {
+			res, err := statement.Exec()
+			if err != nil {
+				log("kpage.go:processPage("+k.CI+") statement.Exec", err)
+				log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
+				tries++
+				if tries < 11 {
+					time.Sleep(1 * time.Second)
+					goto Again2
 				}
-		*/
+				panic(query)
+			} else {
+				add, _ := res.RowsAffected()
+				k.RemovedRows += add
+
+			}
+		}
 		k.stopJob(false)
 	}
-	k.UnlockJob()
 }
 
 /*

@@ -91,10 +91,16 @@ func main() {
 	readConfigJSON()
 	spec = make(map[string]interface{})
 	metrics = make(map[string]int64)
-	redisInit()
+	// redisInit()
 
 	client := &http.Client{}
 	client.Transport = &http2.Transport{}
+
+	kjobQueueInit()
+	kpageQueueInit()
+	sqlInit()
+	tablesInit()
+	etagInit()
 
 	updateSpec()
 	readSpec("v1")
@@ -103,12 +109,6 @@ func main() {
 	readSpec("v4")
 	readSpec("v5")
 	readSpec("v6")
-
-	kjobQueueInit()
-	kpageQueueInit()
-	sqlInit()
-	tablesInit()
-
 	tock := time.NewTimer(3 * time.Second) // 3s
 	go func() {
 		for range tock.C {
