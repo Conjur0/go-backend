@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,9 +30,8 @@ var errorResetTimer *time.Ticker
 
 var backoff = false
 
-var maxInFlight = 20
 var curInFlight = 0
-var inFlight = make(map[int]*kpage, maxInFlight)
+var inFlight = make(map[int]*kpage, c.MaxInFlight)
 var inFlightMutex = sync.RWMutex{}
 var pagesFired = 0
 var pagesFinished = 0
@@ -82,7 +80,7 @@ func gokpageQueueTick(t time.Time) {
 	kpageQueueLen := kpageQueue.len
 	kpageQueueMutex.Unlock()
 
-	for kpageQueueLen > 0 && curInFlight < maxInFlight && !backoff {
+	for kpageQueueLen > 0 && (curInFlight < c.MaxInFlight) && !backoff {
 		qitem := kpageQueue.Pop()
 		if qitem.dead == false {
 			err := -1
@@ -99,6 +97,8 @@ func gokpageQueueTick(t time.Time) {
 			inFlight[err].running = ktime()
 			go inFlight[err].requestPage()
 			inFlightMutex.Unlock()
+		} else {
+			log("kpage.go:gokpageQueueTick()", fmt.Sprintf("Encountered dead cip in queue %s", qitem.cip))
 		}
 		kpageQueueMutex.Lock()
 		kpageQueueLen = kpageQueue.len
@@ -115,7 +115,7 @@ func kpageQueueInit() {
 			gokpageQueueTick(t)
 		}
 	}()
-	for i := 0; i < maxInFlight; i++ {
+	for i := 0; i < c.MaxInFlight; i++ {
 		inFlight[i] = &kpage{dead: true}
 	}
 	temp := time.NewTicker(1 * time.Second)
@@ -126,7 +126,7 @@ func kpageQueueInit() {
 			kpageQueueMutex.Unlock()
 			if fff > 0 {
 				timenow := ktime()
-				entry := fmt.Sprintf("%12d/%12d(%5d/%5d) Q:%6d Fired:%6d Done:%6d Hot(%3d of %3d)  ", bCached, bDownload, rCached, rDownload, fff, pagesFired, pagesFinished, curInFlight, maxInFlight)
+				entry := fmt.Sprintf("%12d/%12d(%5d/%5d) Q:%6d Fired:%6d Done:%6d Hot(%3d of %3d)  ", bCached, bDownload, rCached, rDownload, fff, pagesFired, pagesFinished, curInFlight, c.MaxInFlight)
 				inFlightMutex.Lock()
 				for it := range inFlight {
 					if inFlight[it].dead {
@@ -200,6 +200,7 @@ func (k *kpage) requestPage() {
 		k.job.mutex.Unlock()
 		return
 	}
+
 	defer resp.Body.Close()
 	if k.dead {
 		return
@@ -283,7 +284,6 @@ func (k *kpage) requestPage() {
 		if k.dead {
 			return
 		}
-
 		if k.writeData() {
 			k.job.mutex.Lock()
 			k.job.APIErrors++
@@ -291,13 +291,7 @@ func (k *kpage) requestPage() {
 			k.job.newPage(k.page)
 			k.job.mutex.Unlock()
 		}
-		k.job.mutex.Lock()
-		k.job.PagesProcessed++
-		if k.job.PagesProcessed == k.job.Pages {
-			k.job.stop(false)
-		}
-		k.job.mutex.Unlock()
-		pagesFinished++
+		go k.job.processPage()
 	} else {
 		log("kpage.go:k.requestPage("+k.cip+")", fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db in %dms", resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body), getMetric(k.cip)))
 
@@ -308,37 +302,21 @@ func (k *kpage) requestPage() {
 		k.job.mutex.Unlock()
 	}
 }
-func (k *kpage) owriteData() {
-	outFile := fmt.Sprintf("tmp/%s_%d.json", k.job.Entity["region_id"], k.page)
-	out, err := os.Create(outFile + ".tmp")
-	if err != nil {
-		log("kpage.go:writeData("+outFile+".tmp) os.Create", err)
-		return
-	}
-	defer out.Close()
-
-	if _, err = out.Write(k.body); err != nil {
-		log("kpage.go:writeData("+outFile+".tmp)  out.Write", err)
-		return
-	}
-	out.Close()
-	safeMove(outFile+".tmp", outFile)
-
-}
 
 func (k *kpage) writeData() bool {
+	k.job.mutex.Lock()
 	if k.job.Ins == nil {
 		k.job.Ins = make([]string, k.job.Pages)
-		log("kpage.go:k.requestPage("+k.cip+") k.job.Ins", fmt.Sprintf("IS NULL! Set to %d (len:%d,cap:%d)", k.job.Pages, len(k.job.Ins), cap(k.job.Ins)))
+		//log("kpage.go:k.requestPage("+k.cip+") k.job.Ins", fmt.Sprintf("IS NULL! Set to %d (len:%d,cap:%d)", k.job.Pages, len(k.job.Ins), cap(k.job.Ins)))
 	}
 	if k.job.InsIds == nil {
 		k.job.InsIds = make([]string, k.job.Pages)
-		log("kpage.go:k.requestPage("+k.cip+") k.job.InsIds", fmt.Sprintf("IS NULL! Set to %d (len:%d,cap:%d)", int(k.job.Pages)*k.job.MaxItems, len(k.job.InsIds), cap(k.job.InsIds)))
+		//log("kpage.go:k.requestPage("+k.cip+") k.job.InsIds", fmt.Sprintf("IS NULL! Set to %d (len:%d,cap:%d)", int(k.job.Pages)*k.job.MaxItems, len(k.job.InsIds), cap(k.job.InsIds)))
 	}
-	log("kpage.go:writeData("+k.cip+")", fmt.Sprintf("called with %db", len(k.body)))
+	k.job.mutex.Unlock()
+	//log("kpage.go:writeData("+k.cip+")", fmt.Sprintf("called with %db", len(k.body)))
 	if err := k.job.table.transform(k.job.table, k); err != nil {
 		return true
 	}
-
 	return false
 }

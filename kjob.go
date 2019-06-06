@@ -69,7 +69,8 @@ type kjob struct {
 	Token    string `json:"token"`    //evesso access_token
 	MaxItems int    `json:"maxItems"`
 
-	Ins       []string `json:"ins"`    //array of data waiting to be processed by sql
+	Ins       []string `json:"ins"` //array of data waiting to be processed by sql
+	InsLength int      `json:"insLength"`
 	InsIds    []string `json:"insIds"` //array of ids seen in this request (ones not here will be purged from sql upon completion of request)
 	NextRun   int64    `json:"nextRun"`
 	Expires   int64    `json:"expires"`    //milliseconds since 1970, when cache miss will occur
@@ -86,20 +87,20 @@ type kjob struct {
 	Pages          uint16 `json:"pages"`          //Pages: 0, 1
 	PagesProcessed uint16 `json:"pagesProcessed"` //count of completed pages (excluding heads)
 	PagesQueued    uint16 `json:"pagesQueued"`    //cumlative count of pages queued
-
-	Records      uint16        `json:"records"`      //cumlative count of records
-	ChangedRows  uint16        `json:"changedRows"`  //cumlative count of changed records
-	AffectedRows uint16        `json:"affectedRows"` //cumlative count of affected records
-	RemovedRows  uint16        `json:"removedRows"`  //cumlative count of removed records
-	QueriesDone  uint16        `json:"queries_done"` //cumlative count of completed SQL Queries
-	Queries      uint16        `json:"queries"`      //cumlative count of fired SQL Queries
-	Runs         int           `json:"runs"`
-	heart        *time.Timer   //heartbeat timer
-	req          *http.Request //http request
-	running      bool
-	mutex        sync.RWMutex
-	page         map[uint16]*kpage
-	table        *table
+	InSQL          bool
+	Records        int           `json:"records"`      //cumlative count of records
+	ChangedRows    int           `json:"changedRows"`  //cumlative count of changed records
+	AffectedRows   int64         `json:"affectedRows"` //cumlative count of affected records
+	RemovedRows    int64         `json:"removedRows"`  //cumlative count of removed records
+	QueriesDone    int           `json:"queries_done"` //cumlative count of completed SQL Queries
+	Queries        int           `json:"queries"`      //cumlative count of fired SQL Queries
+	Runs           int           `json:"runs"`
+	heart          *time.Timer   //heartbeat timer
+	req            *http.Request //http request
+	running        bool
+	mutex          sync.RWMutex
+	page           map[uint16]*kpage
+	table          *table
 }
 
 func newKjob(method string, specnum string, endpoint string, entity map[string]string, pages uint16, table *table) {
@@ -191,14 +192,14 @@ func (k *kjob) print(msg string) {
 	// 	k.BytesDownloaded, k.BytesCached,
 	// 	k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs,
 	// 	kjobQueueLen, kjobQueueProcessed, kjobQueueFinished, getMetric(k.CI)))
-	log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s %.0f %s %s %d %d %.0f %d %d %d %d %d %d %d %d %d %d %d %d",
+	log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s %.0f %s %s %d %d %.0f %d %d %d %d %d %d %d %d %d %d %d %d %t",
 		k.Method, k.CI,
 		k.Cache, k.Security, k.Token,
 		k.NextRun, k.Expires, k.ExpiresIn,
 		k.APICalls, k.APICache, k.APIErrors,
 		k.BytesDownloaded, k.BytesCached,
 		k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs,
-		kjobQueueLen, getMetric(k.CI)))
+		kjobQueueLen, getMetric(k.CI), k.InSQL))
 }
 func (k *kjob) start() {
 	k.mutex.Lock()
@@ -360,3 +361,119 @@ func (k *kjob) updateExp(expire string) {
 		k.mutex.Unlock()
 	}
 }
+func (k *kjob) processPage() {
+	k.mutex.Lock()
+	k.InSQL = true
+	k.PagesProcessed++
+	pagesFinished++
+	if (k.InsLength >= 15000) || ((k.InsLength > 0) && k.PagesProcessed == k.Pages) {
+		var b strings.Builder
+		var tries int
+		comma := ""
+		for it := range k.Ins {
+			if len(k.Ins[it]) > 0 {
+				fmt.Fprintf(&b, "%s%s", comma, k.Ins[it])
+				k.Ins[it] = ""
+				comma = ","
+			}
+		}
+		query := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s",
+			k.table.database,
+			k.table.name,
+			k.table.columnOrder(),
+			b.String(),
+			k.table.duplicates,
+		)
+	Again1:
+		statement, err := database.Prepare(query)
+		if err != nil {
+			log("kpage.go:processPage("+k.CI+")", err)
+			log("kpage.go:processPage("+k.CI+")", fmt.Sprintf("Query was: INSERT INTO `%s`.`%s` (%s) VALUES ...[%d items]... %s", k.table.database, k.table.name, k.table.columnOrder(), k.InsLength, k.table.duplicates))
+			tries++
+			if tries < 11 {
+				time.Sleep(1 * time.Second)
+				goto Again1
+			}
+			panic(query)
+		} else {
+			res, err := statement.Exec()
+			if err != nil {
+				log("kpage.go:processPage("+k.CI+")", err)
+				log("kpage.go:processPage("+k.CI+")", fmt.Sprintf("Query was: INSERT INTO `%s`.`%s` (%s) VALUES ...[%d items]... %s", k.table.database, k.table.name, k.table.columnOrder(), k.InsLength, k.table.duplicates))
+				tries++
+				if tries < 11 {
+					time.Sleep(1 * time.Second)
+					goto Again1
+				}
+				panic(query)
+			} else {
+				add, _ := res.RowsAffected()
+				k.AffectedRows += add
+				k.Records += k.InsLength
+				k.InsLength = 0
+
+			}
+		}
+	}
+
+	if k.PagesProcessed == k.Pages {
+		var tries int
+	Again2:
+		query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
+		statement, err := database.Prepare(query)
+		if err != nil {
+			log("kpage.go:processPage("+k.CI+")", err)
+			log("kpage.go:processPage("+k.CI+")", fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE ...", k.table.database, k.table.name))
+			tries++
+			if tries < 11 {
+				time.Sleep(1 * time.Second)
+				goto Again2
+			}
+			panic(query)
+		} else {
+			res, err := statement.Exec()
+			if err != nil {
+				log("kpage.go:processPage("+k.CI+")", err)
+				log("kpage.go:processPage("+k.CI+")", fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE ...", k.table.database, k.table.name))
+				tries++
+				if tries < 11 {
+					time.Sleep(1 * time.Second)
+					goto Again2
+				}
+				panic(query)
+			} else {
+				add, _ := res.RowsAffected()
+				k.RemovedRows += add
+
+			}
+		}
+	}
+	k.InSQL = false
+	k.stop(false)
+	k.mutex.Unlock()
+}
+
+/*
+const finish_page = (treq) => {
+  if (treq.head) { var d = treq.head; } else { var d = treq; }
+  var tbl = objects.objects[d.object].props.table;
+  tasks.items[d.ci].processing_pages = tasks.items[d.ci].processing_pages.filter((e) => { return (e !== treq.page); });
+  //log(`finish_page ${treq.cip} pages remaining: ${tasks.items[d.ci].processing_pages}`);
+  let sql_needs_to_be_ran = true;
+  if ((d.ins.length >= 15000) || ((d.ins.length > 0) && (tasks.items[d.ci].processing_pages.length === 0))) {
+    d.ttlqueries++;
+    d.queries++;
+    m.sql(treq, `INSERT INTO ${tbl.name} (${tbl.columnOrder.join(",")}) VALUES ${d.ins.join(',')} ${tbl.duplicates}`, [], callback_sql);
+    //force garbage collection
+    delete d.ins;
+    d.ins = [];
+    sql_needs_to_be_ran = false;
+  }
+  if ((tasks.items[d.ci].processing_pages.length === 0) && (sql_needs_to_be_ran)) {
+    d.queries++;
+    callback_sql({ affectedRows: 0, changedRows: 0 }, treq);
+  }
+
+}
+
+*/
