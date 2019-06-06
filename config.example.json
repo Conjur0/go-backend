@@ -1,0 +1,35 @@
+{
+  "domain": "yourdomain.com",
+  "email": "you@yourdomain.com",
+  "max_in_flight": 20,
+  "mariadb": {
+    "user": "karkinos",
+    "pass": "mypasswordissupersecret"
+  },
+  "oauth": [
+    {
+      "name": "Discord",
+      "clientID": "ffff_SNIP_ffff",
+      "clientSecret": "ffff_SNIP_ffff",
+      "callback": "https://yourdomain.com/sso",
+      "redirect": "https://yourdomain.com/",
+      "authURL": "https://discordapp.com/oauth2/authorize/",
+      "refererURL": "https://discordapp.com/oauth2/authorize/",
+      "tokenURL": "https://discordapp.com/api/oauth2/token",
+      "verifyURL": "https://discordapp.com/api/users/@me",
+      "revokeURL": "https://discordapp.com/api/oauth2/token/revoke"
+    },
+    {
+      "name": "CCP",
+      "clientID": "ffff_SNIP_ffff",
+      "clientSecret": "ffff_SNIP_ffff",
+      "callback": "https://yourdomain.com/sso",
+      "redirect": "https://yourdomain.com/",
+      "authURL": "https://login.eveonline.com/oauth/authorize/",
+      "refererURL": "https://login.eveonline.com/oauth/authorize/",
+      "tokenURL": "https://login.eveonline.com/oauth/token",
+      "verifyURL": "https://login.eveonline.com/oauth/verify",
+      "revokeURL": "https://login.eveonline.com/oauth/revoke"
+    }
+  ]
+}
