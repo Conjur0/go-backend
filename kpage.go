@@ -148,6 +148,7 @@ func (k *kjob) newPage(page uint16) {
 	k.page[page] = &kpage{
 		job:  k,
 		page: page,
+		dead: false,
 		cip:  fmt.Sprintf("%s|%d", k.CI, page)}
 	kpageQueue.Push(k.page[page])
 }
@@ -165,8 +166,9 @@ func (k *kpage) requestPage() {
 	}
 	addMetric(k.cip)
 	if backoff {
+		log("kpage.go:k.requestPage("+k.cip+") backoff", "backoff trigger")
 		k.job.mutex.Lock()
-		k.job.stop(false)
+		k.job.stopJob(false)
 		k.job.APIErrors++
 		k.job.mutex.Unlock()
 		return
@@ -177,7 +179,7 @@ func (k *kpage) requestPage() {
 	if err != nil {
 		log("kpage.go:k.requestPage("+k.cip+") http.NewRequest", err)
 		k.job.mutex.Lock()
-		k.job.stop(false)
+		k.job.stopJob(false)
 		k.job.APIErrors++
 		k.job.mutex.Unlock()
 		return
