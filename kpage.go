@@ -31,10 +31,15 @@ var errorResetTimer *time.Ticker
 var backoff = false
 
 var curInFlight = 0
+var lastInFlight = 0
 var inFlight = make(map[int]*kpage, c.MaxInFlight)
 var inFlightMutex = sync.RWMutex{}
 var pagesFired = 0
+var lastFired = 0
+
 var pagesFinished = 0
+var lastFinished = 0
+
 var bCached = 0
 var bDownload = 0
 var rCached = 0
@@ -45,13 +50,17 @@ type kpageQueueS struct {
 	len      int
 }
 type kpage struct {
-	job     *kjob
-	page    uint16
-	cip     string
-	body    []byte
-	req     *http.Request
-	running int64
-	dead    bool
+	job      *kjob
+	page     uint16
+	cip      string
+	body     []byte
+	req      *http.Request
+	running  int64
+	dead     bool
+	mutex    sync.Mutex
+	Ins      strings.Builder
+	InsReady bool
+	InsIds   strings.Builder
 }
 
 func (kpageQueueS *kpageQueueS) Push(element *kpage) {
@@ -124,9 +133,12 @@ func kpageQueueInit() {
 			kpageQueueMutex.Lock()
 			fff := kpageQueue.len
 			kpageQueueMutex.Unlock()
-			if fff > 0 {
+			if fff > 0 || lastFinished != pagesFinished || lastFired != pagesFired || lastInFlight != curInFlight {
 				timenow := ktime()
-				entry := fmt.Sprintf("%12d/%12d(%5d/%5d) Q:%6d Fired:%6d Done:%6d Hot(%3d of %3d)  ", bCached, bDownload, rCached, rDownload, fff, pagesFired, pagesFinished, curInFlight, c.MaxInFlight)
+				lastFinished = pagesFinished
+				lastFired = pagesFired
+				lastInFlight = curInFlight
+				entry := fmt.Sprintf("%12d/%12d(%5d/%5d) Q:%6d Fired:%6d Done:%6d Hot(%3d of %3d)  ", bCached, bDownload, rCached, rDownload, fff, lastFired, lastFinished, lastInFlight, c.MaxInFlight)
 				inFlightMutex.Lock()
 				for it := range inFlight {
 					if inFlight[it].dead {
@@ -148,7 +160,6 @@ func (k *kjob) newPage(page uint16) {
 	k.page[page] = &kpage{
 		job:  k,
 		page: page,
-		dead: false,
 		cip:  fmt.Sprintf("%s|%d", k.CI, page)}
 	kpageQueue.Push(k.page[page])
 }
@@ -306,16 +317,6 @@ func (k *kpage) requestPage() {
 }
 
 func (k *kpage) writeData() bool {
-	k.job.mutex.Lock()
-	if k.job.Ins == nil {
-		k.job.Ins = make([]string, k.job.Pages)
-		//log("kpage.go:k.requestPage("+k.cip+") k.job.Ins", fmt.Sprintf("IS NULL! Set to %d (len:%d,cap:%d)", k.job.Pages, len(k.job.Ins), cap(k.job.Ins)))
-	}
-	if k.job.InsIds == nil {
-		k.job.InsIds = make([]string, k.job.Pages)
-		//log("kpage.go:k.requestPage("+k.cip+") k.job.InsIds", fmt.Sprintf("IS NULL! Set to %d (len:%d,cap:%d)", int(k.job.Pages)*k.job.MaxItems, len(k.job.InsIds), cap(k.job.InsIds)))
-	}
-	k.job.mutex.Unlock()
 	//log("kpage.go:writeData("+k.cip+")", fmt.Sprintf("called with %db", len(k.body)))
 	if err := k.job.table.transform(k.job.table, k); err != nil {
 		return true

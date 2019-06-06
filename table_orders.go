@@ -36,9 +36,6 @@ func tablesInitorders() {
 		primaryKey: "order_id",
 		respKey:    "order_id",
 		transform: func(t *table, k *kpage) error {
-			k.job.mutex.Lock()
-			defer k.job.mutex.Unlock()
-			//return t.name + " transform function output: "
 			var jsonData orders
 			if err := json.Unmarshal(k.body, &jsonData); err != nil {
 				return err
@@ -46,21 +43,24 @@ func tablesInitorders() {
 			var entity string
 			var ok bool
 			owner := "NULL"
-			if entity, ok = k.job.Entity["region_id"]; !ok {
-				if entity, ok = k.job.Entity["structure_id"]; !ok {
-					if entity, ok = k.job.Entity["character_id"]; ok {
+			k.job.mutex.Lock()
+			tmp := k.job.Entity
+			k.job.mutex.Unlock()
+
+			if entity, ok = tmp["region_id"]; !ok {
+				if entity, ok = tmp["structure_id"]; !ok {
+					if entity, ok = tmp["character_id"]; ok {
 						owner = entity
 					} else {
 						return errors.New("unable to resolve entity")
 					}
 				}
 			}
-
 			length := len(jsonData)
-			var ins strings.Builder
-			ins.Grow(length * 104)
-			var insIds strings.Builder
-			insIds.Grow(length * 11)
+			k.mutex.Lock()
+			defer k.mutex.Unlock()
+			k.Ins.Grow(length * 104)
+			k.InsIds.Grow(length * 11)
 			comma := ","
 			length--
 			for it := range jsonData {
@@ -76,15 +76,16 @@ func tablesInitorders() {
 				if jsonData[it].IsBuyOrder {
 					ibo = 1
 				}
-				fmt.Fprintf(&ins, "(%s,%s,%d,%d,%d,%d,%d,%d,%f,'%s',%d,%d,%d)%s", entity, owner, jsonData[it].Duration, ibo, issued.UnixNano()/int64(time.Millisecond), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, comma)
-				fmt.Fprintf(&insIds, "%d%s", jsonData[it].OrderID, comma)
+				fmt.Fprintf(&k.Ins, "(%s,%s,%d,%d,%d,%d,%d,%d,%f,'%s',%d,%d,%d)%s", entity, owner, jsonData[it].Duration, ibo, issued.UnixNano()/int64(time.Millisecond), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, comma)
+				fmt.Fprintf(&k.InsIds, "%d%s", jsonData[it].OrderID, comma)
 			}
 			if k.dead || !k.job.running {
 				return errors.New("transform finished a dead job")
 			}
-			k.job.Ins[k.page-1] = ins.String()
-			k.job.InsIds[k.page-1] = insIds.String()
+			k.InsReady = true
+			k.job.mutex.Lock()
 			k.job.InsLength += length + 1
+			k.job.mutex.Unlock()
 			//fmt.Printf("%s\n%s\n\n", k.job.Ins[k.page-1], k.job.InsIds[k.page-1])
 			return nil
 		},
@@ -99,14 +100,24 @@ func tablesInitorders() {
 				}
 			}
 			var b strings.Builder
-			length := len(k.InsIds) - 1
+			length := uint16(len(k.page) - 1)
 			var comma string
-			for it := range k.InsIds {
+			for it := range k.page {
 				if it == length {
 					comma = ""
 				}
-				if len(k.InsIds[it]) > 0 {
-					fmt.Fprintf(&b, "%s%s", k.InsIds[it], comma)
+				if k.page[it].InsReady {
+					fmt.Fprintf(&b, "%s%s", k.page[it].InsIds.String(), comma)
+				} else {
+					log("table_orders.go:t.purge("+k.CI+")", "attempting to purge records with a non-ready page")
+					for it := range k.page {
+						if k.page[it].InsReady {
+							fmt.Printf("Page %d: READY\n", it)
+						} else {
+							fmt.Printf("Page %d: !!!!! NOT READY !!!!!\n", it)
+						}
+					}
+					return "FALSE"
 				}
 			}
 			if b.Len() > 0 {

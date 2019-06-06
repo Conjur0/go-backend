@@ -69,12 +69,10 @@ type kjob struct {
 	Token    string `json:"token"`    //evesso access_token
 	MaxItems int    `json:"maxItems"`
 
-	Ins       []string `json:"ins"` //array of data waiting to be processed by sql
-	InsLength int      `json:"insLength"`
-	InsIds    []string `json:"insIds"` //array of ids seen in this request (ones not here will be purged from sql upon completion of request)
-	NextRun   int64    `json:"nextRun"`
-	Expires   int64    `json:"expires"`    //milliseconds since 1970, when cache miss will occur
-	ExpiresIn float64  `json:"expires_in"` //milliseconds until expiration, at completion of first page (or head) pulled
+	InsLength int     `json:"insLength"`
+	NextRun   int64   `json:"nextRun"`
+	Expires   int64   `json:"expires"`    //milliseconds since 1970, when cache miss will occur
+	ExpiresIn float64 `json:"expires_in"` //milliseconds until expiration, at completion of first page (or head) pulled
 
 	APICalls  uint16 `json:"apiCalls"`  //count of API Calls (including head, errors, etc)
 	APICache  uint16 `json:"apiCache"`  //count of 304 responses received
@@ -220,8 +218,6 @@ func (k *kjob) stopJob(zombie bool) {
 	}
 	k.running = false
 	k.Token = "none"
-	k.Ins = nil
-	k.InsIds = nil
 	k.Expires = 0
 	k.APICalls = 0
 	k.APICache = 0
@@ -371,12 +367,13 @@ func (k *kjob) processPage() {
 		var b strings.Builder
 		var tries int
 		comma := ""
-		for it := range k.Ins {
-			if len(k.Ins[it]) > 0 {
-				fmt.Fprintf(&b, "%s%s", comma, k.Ins[it])
-				k.Ins[it] = ""
+		for it := range k.page {
+			k.page[it].mutex.Lock()
+			if k.page[it].InsReady {
+				fmt.Fprintf(&b, "%s%s", comma, k.page[it].Ins.String())
 				comma = ","
 			}
+			k.page[it].mutex.Unlock()
 		}
 		query := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s",
 			k.table.database,
@@ -388,8 +385,8 @@ func (k *kjob) processPage() {
 	Again1:
 		statement, err := database.Prepare(query)
 		if err != nil {
-			log("kpage.go:processPage("+k.CI+")", err)
-			log("kpage.go:processPage("+k.CI+")", fmt.Sprintf("Query was: INSERT INTO `%s`.`%s` (%s) VALUES ...[%d items]... %s", k.table.database, k.table.name, k.table.columnOrder(), k.InsLength, k.table.duplicates))
+			log("kpage.go:processPage("+k.CI+") database.Prepare", err)
+			log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)INSERT INTO `%s`.`%s` (%s) VALUES ...[%d items]... %s", len(query), k.table.database, k.table.name, k.table.columnOrder(), k.InsLength, k.table.duplicates))
 			tries++
 			if tries < 11 {
 				time.Sleep(1 * time.Second)
@@ -399,8 +396,8 @@ func (k *kjob) processPage() {
 		} else {
 			res, err := statement.Exec()
 			if err != nil {
-				log("kpage.go:processPage("+k.CI+")", err)
-				log("kpage.go:processPage("+k.CI+")", fmt.Sprintf("Query was: INSERT INTO `%s`.`%s` (%s) VALUES ...[%d items]... %s", k.table.database, k.table.name, k.table.columnOrder(), k.InsLength, k.table.duplicates))
+				log("kpage.go:processPage("+k.CI+") statement.Exec", err)
+				log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)INSERT INTO `%s`.`%s` (%s) VALUES ...[%d items]... %s", len(query), k.table.database, k.table.name, k.table.columnOrder(), k.InsLength, k.table.duplicates))
 				tries++
 				if tries < 11 {
 					time.Sleep(1 * time.Second)
@@ -420,12 +417,12 @@ func (k *kjob) processPage() {
 	if k.PagesProcessed == k.Pages {
 		/*
 				var tries int
-			Again2:
 				query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
+			Again2:
 				statement, err := database.Prepare(query)
 				if err != nil {
-					log("kpage.go:processPage("+k.CI+")", err)
-					log("kpage.go:processPage("+k.CI+")", fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE ...", k.table.database, k.table.name))
+					log("kpage.go:processPage("+k.CI+") database.Prepare", err)
+					log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
 					tries++
 					if tries < 11 {
 						time.Sleep(1 * time.Second)
@@ -435,8 +432,8 @@ func (k *kjob) processPage() {
 				} else {
 					res, err := statement.Exec()
 					if err != nil {
-						log("kpage.go:processPage("+k.CI+")", err)
-						log("kpage.go:processPage("+k.CI+")", fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE ...", k.table.database, k.table.name))
+						log("kpage.go:processPage("+k.CI+") statement.Exec", err)
+						log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
 						tries++
 						if tries < 11 {
 							time.Sleep(1 * time.Second)

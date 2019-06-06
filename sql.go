@@ -15,7 +15,7 @@ func sqlInit() {
 	var err error
 
 	log("sql.go:sqlInit()", "attempting to connect to SQL server, user:"+c.Mariadb.User)
-	database, err = sql.Open("mysql", c.Mariadb.User+":"+c.Mariadb.Pass+"@tcp(127.0.0.1:3306)/")
+	database, err = sql.Open("mysql", c.Mariadb.User+":"+c.Mariadb.Pass+"@tcp(127.0.0.1:3306)/?maxAllowedPacket=0")
 	if err != nil {
 		panic("Unable to connect to sql!")
 	}
