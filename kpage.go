@@ -57,9 +57,8 @@ type kpage struct {
 	dead      bool
 	pageMutex sync.Mutex
 	Ins       strings.Builder
-	InsReady  bool
 	InsIds    strings.Builder
-	whatDo    string
+	InsReady  bool
 	etag      string
 }
 
@@ -167,14 +166,13 @@ func kpageQueueInit() {
 func (k *kjob) newPage(page uint16) {
 	k.PagesQueued++
 	k.page[page] = &kpage{
-		job:    k,
-		page:   page,
-		cip:    fmt.Sprintf("%s|%d", k.CI, page),
-		whatDo: "created"}
+		job:  k,
+		page: page,
+		cip:  fmt.Sprintf("%s|%d", k.CI, page),
+	}
 	kpageQueue.Push(k.page[page])
 }
 func (k *kpage) destroy() {
-	k.whatDo = "destroyed"
 	if k.running > 0 {
 		curInFlight--
 		k.running = 0
@@ -182,7 +180,6 @@ func (k *kpage) destroy() {
 	k.dead = true
 }
 func (k *kpage) requestPage() {
-	k.whatDo = "requestPage"
 	defer k.destroy()
 	if k.dead {
 		return
@@ -207,7 +204,6 @@ func (k *kpage) requestPage() {
 		k.job.UnlockJob()
 		return
 	}
-	k.whatDo = "newRequest"
 	k.req = req
 	if len(etaghdr) > 0 {
 		k.req.Header.Add("If-None-Match", etaghdr)
@@ -226,7 +222,6 @@ func (k *kpage) requestPage() {
 		k.job.UnlockJob()
 		return
 	}
-	k.whatDo = "client.Do"
 
 	defer resp.Body.Close()
 	if k.dead {
@@ -273,7 +268,7 @@ func (k *kpage) requestPage() {
 	} else if resp.StatusCode == 304 {
 		ids, length := getEtagIds(k.cip)
 		k.InsIds.WriteString(ids)
-		if length == 0 {
+		if length == 0 || len(ids) == 0 {
 			log("kpage.go:k.requestPage("+k.cip+") getEtagData", "No Data returned!")
 			killEtag(k.cip)
 			k.job.LockJob("kpage.go:280")
@@ -282,9 +277,11 @@ func (k *kpage) requestPage() {
 			k.job.UnlockJob()
 			return
 		}
+		foo := strings.Split(ids, ",")
 		bCached += length
 		k.job.LockJob("kpage.go:288")
 		k.job.BytesCached += length
+		k.job.IDLength += len(foo)
 		k.job.APICache++
 		k.job.UnlockJob()
 	}
@@ -308,22 +305,19 @@ func (k *kpage) requestPage() {
 		if k.dead {
 			return
 		}
-		k.whatDo = "writeData"
 
 		if len(k.etag) > 0 {
 			if k.writeData() {
-				k.whatDo = "writeFail"
 				k.job.LockJob("kpage.go:319")
 				k.job.APIErrors++
 				k.job.PagesQueued--
 				k.job.newPage(k.page)
 				k.job.UnlockJob()
 			}
-			setEtag(k.cip, k.etag, string(k.body), k.InsIds.String())
+			setEtag(k.cip, k.etag, k.InsIds.String(), len(k.body))
 		} else {
 			k.InsReady = true
 		}
-		k.whatDo = "processPage"
 
 		go k.job.processPage()
 	} else {

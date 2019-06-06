@@ -1,0 +1,44 @@
+//////////////////////////////////////////////////////////////////////////////////
+// table_spec.go - `spec` table definition
+//////////////////////////////////////////////////////////////////////////////////
+//
+package main
+
+func tablesInitspec() {
+	tables["spec"] = &table{
+		database:   "karkinos",
+		name:       "spec",
+		primaryKey: "method:spec:endpoint",
+		keys:       []string{},
+		_columnOrder: []string{
+			"method",
+			"spec",
+			"endpoint",
+			"security",
+			"cache",
+			"items",
+			"paged",
+		},
+		duplicates: "ON DUPLICATE KEY UPDATE etag=VALUES(etag)",
+		proto: []string{
+			"method VARCHAR(12) NOT NULL",
+			"spec VARCHAR(10) NOT NULL",
+			"endpoint VARCHAR(110) NOT NULL",
+			"security VARCHAR(110) NOT NULL",
+			"cache INT NOT NULL",
+			"items INT NOT NULL",
+			"paged TINYINT NOT NULL",
+		},
+		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",
+	}
+}
+
+/*
+CREATE TABLE `karkinos`.`spec` (
+	 `mse` VARCHAR(250) NOT NULL ,
+		`security` VARCHAR(250) NOT NULL ,
+		 `cache` INT NOT NULL ,
+			`items` INT NOT NULL ,
+			 `paged` TINYINT NOT NULL ,
+			  PRIMARY KEY (`mse`)) ENGINE = MyISAM;
+*/

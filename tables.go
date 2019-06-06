@@ -40,15 +40,30 @@ func (t *table) columnOrder() string {
 }
 func (t *table) create() string {
 	var b strings.Builder
-	comma := ","
 	fmt.Fprintf(&b, "CREATE TABLE IF NOT EXISTS `%s`.`%s` (\n", t.database, t.name)
+
+	//fields
 	for it := range t.proto {
 		fmt.Fprintf(&b, "    %s,\n", t.proto[it])
 	}
+
+	//primary key
+	prim := strings.Split(t.primaryKey, ":")
+	comma := ""
+	if len(prim) > 0 {
+		b.WriteString("    PRIMARY KEY (")
+		for it := range prim {
+			fmt.Fprintf(&b, "%s`%s`", comma, prim[it])
+			comma = ","
+		}
+	}
+	comma = ","
 	if len(t.keys) == 0 {
 		comma = ""
 	}
-	fmt.Fprintf(&b, "    PRIMARY KEY (`%s`)%s\n", t.primaryKey, comma)
+	fmt.Fprintf(&b, ")%s\n", comma)
+
+	//keys
 	length := len(t.keys) - 1
 	for it := range t.keys {
 		if it == length {
@@ -66,6 +81,7 @@ var tables = make(map[string]*table)
 func tablesInit() {
 	tablesInitorders()
 	tablesInitetag()
+	tablesInitspec()
 	for it := range tables {
 		statement, err := database.Prepare(tables[it].create())
 		if err != nil {

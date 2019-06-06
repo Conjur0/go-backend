@@ -66,11 +66,12 @@ type kjob struct {
 	CI       string  `json:"ci"`    //CI: concat of endpoint:JSON.Marshall(entity)
 	Cache    float64 `json:"cache"` //Cache: milliseconds from cache miss
 
-	Security string `json:"security"` //Security: EVESSO Token required or "none"
-	Token    string `json:"token"`    //evesso access_token
-	MaxItems int    `json:"maxItems"`
-
+	Security  string  `json:"security"` //Security: EVESSO Token required or "none"
+	Token     string  `json:"token"`    //evesso access_token
+	MaxItems  int     `json:"maxItems"`
+	RunTag    int64   `json:"runTag"`
 	InsLength int     `json:"insLength"`
+	IDLength  int     `json:"idLength"`
 	NextRun   int64   `json:"nextRun"`
 	Expires   int64   `json:"expires"`    //milliseconds since 1970, when cache miss will occur
 	ExpiresIn float64 `json:"expires_in"` //milliseconds until expiration, at completion of first page (or head) pulled
@@ -229,6 +230,7 @@ func (k *kjob) print(msg string) {
 func (k *kjob) start() {
 	k.LockJob("kjob.go:226")
 	k.heart.Reset(30 * time.Second)
+	k.RunTag = ktime()
 	k.running = true
 	k.Runs++
 	addMetric(k.CI)
@@ -332,7 +334,7 @@ func (k *kjob) requestHead() {
 
 	if resp.StatusCode == 200 {
 		if _, ok := resp.Header["Etag"]; ok {
-			go setEtag(k.CI, resp.Header["Etag"][0], "head", "1")
+			go setEtag(k.CI, resp.Header["Etag"][0], "1", 1)
 		}
 		//log("kjob.go:k.requestHead("+k.CI+") )", fmt.Sprintf("RCVD (200) %s in %dms", k.URL, getMetric("HEAD:"+k.CI)))
 		//k.print("")
@@ -389,6 +391,56 @@ func (k *kjob) processPage() {
 	defer k.UnlockJob()
 	k.PagesProcessed++
 	pagesFinished++
+
+	//update last_seen on cached entries
+	if (k.IDLength >= 15000) || ((k.IDLength > 0) && k.PagesProcessed == k.Pages) {
+		var b strings.Builder
+		var tries int
+		comma := ""
+		for it := range k.page {
+			k.page[it].pageMutex.Lock()
+			if k.page[it].InsReady && (k.page[it].Ins.Len() == 0) && (k.page[it].InsIds.Len() > 0) {
+				fmt.Fprintf(&b, "%s%s", comma, k.page[it].InsIds.String())
+				k.page[it].InsIds.Reset()
+				comma = ","
+			}
+			k.page[it].pageMutex.Unlock()
+		}
+		if b.Len() == 0 {
+			log("kjob.go:processPage()", "Memory read error")
+			k.stopJob(false)
+			return
+		}
+		query := fmt.Sprintf("UPDATE `%s`.`%s` SET last_seen=%d WHERE %s IN (%s)", k.table.database, k.table.name, k.RunTag, k.table.primaryKey, b.String())
+	Again0:
+		statement, err := database.Prepare(query)
+		if err != nil {
+			log("kpage.go:processPage("+k.CI+") database.Prepare", err)
+			log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)UPDATE `%s`.`%s` SET last_seen=%d WHERE %s IN (...)", len(query), k.table.database, k.table.name, k.RunTag, k.table.primaryKey))
+			tries++
+			if tries < 11 {
+				time.Sleep(1 * time.Second)
+				goto Again0
+			}
+			panic(query)
+		} else {
+			_, err := statement.Exec()
+			if err != nil {
+				log("kpage.go:processPage("+k.CI+") statement.Exec", err)
+				log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)UPDATE `%s`.`%s` SET last_seen=%d WHERE %s IN (...)", len(query), k.table.database, k.table.name, k.RunTag, k.table.primaryKey))
+				tries++
+				if tries < 11 {
+					time.Sleep(1 * time.Second)
+					goto Again0
+				}
+				panic(query)
+			} else {
+				k.Records += k.IDLength
+				k.IDLength = 0
+			}
+		}
+	}
+
 	if (k.InsLength >= 15000) || ((k.InsLength > 0) && k.PagesProcessed == k.Pages) {
 		var b strings.Builder
 		var tries int
@@ -447,36 +499,38 @@ func (k *kjob) processPage() {
 	}
 
 	if k.PagesProcessed == k.Pages {
-		var tries int
-		query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
-	Again2:
-		statement, err := database.Prepare(query)
-		if err != nil {
-			log("kpage.go:processPage("+k.CI+") database.Prepare", err)
-			log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
-			tries++
-			if tries < 11 {
-				time.Sleep(1 * time.Second)
-				goto Again2
-			}
-			panic(query)
-		} else {
-			res, err := statement.Exec()
-			if err != nil {
-				log("kpage.go:processPage("+k.CI+") statement.Exec", err)
-				log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
-				tries++
-				if tries < 11 {
-					time.Sleep(1 * time.Second)
-					goto Again2
-				}
-				panic(query)
-			} else {
-				add, _ := res.RowsAffected()
-				k.RemovedRows += add
+		/*
+				var tries int
+				query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
+			Again2:
+				statement, err := database.Prepare(query)
+				if err != nil {
+					log("kpage.go:processPage("+k.CI+") database.Prepare", err)
+					log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
+					tries++
+					if tries < 11 {
+						time.Sleep(1 * time.Second)
+						goto Again2
+					}
+					panic(query)
+				} else {
+					res, err := statement.Exec()
+					if err != nil {
+						log("kpage.go:processPage("+k.CI+") statement.Exec", err)
+						log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
+						tries++
+						if tries < 11 {
+							time.Sleep(1 * time.Second)
+							goto Again2
+						}
+						panic(query)
+					} else {
+						add, _ := res.RowsAffected()
+						k.RemovedRows += add
 
-			}
-		}
+					}
+				}
+		*/
 		k.stopJob(false)
 	}
 }

@@ -91,7 +91,6 @@ func main() {
 	readConfigJSON()
 	spec = make(map[string]interface{})
 	metrics = make(map[string]int64)
-	// redisInit()
 
 	client := &http.Client{}
 	client.Transport = &http2.Transport{}

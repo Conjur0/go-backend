@@ -19,7 +19,6 @@ import (
 
 var getetag *sql.Stmt
 var getetagids *sql.Stmt
-var getetagdata *sql.Stmt
 
 var setetag *sql.Stmt
 var killetag *sql.Stmt
@@ -41,14 +40,7 @@ func etagInit() {
 		panic(err)
 	}
 
-	query = fmt.Sprintf("SELECT data FROM `%s`.`%s` WHERE cip = ? LIMIT 1", tables["etag"].database, tables["etag"].name)
-	getetagdata, err = database.Prepare(query)
-	if err != nil {
-		log("etag.go:etagInit()", err)
-		panic(err)
-	}
-
-	query = fmt.Sprintf("INSERT INTO `%s`.`%s` (cip,etag,data,ids,len) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE etag=VALUES(etag),data=VALUES(data),ids=VALUES(ids)", tables["etag"].database, tables["etag"].name)
+	query = fmt.Sprintf("INSERT INTO `%s`.`%s` (cip,etag,ids,len) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE etag=VALUES(etag),ids=VALUES(ids),len=VALUES(len)", tables["etag"].database, tables["etag"].name)
 	setetag, err = database.Prepare(query)
 	if err != nil {
 		log("etag.go:etagInit()", err)
@@ -81,23 +73,6 @@ func getEtag(cip string) string {
 	return out
 }
 
-func getEtagData(cip string) string {
-	rows, err := getetagdata.Query(cip)
-	if err != nil {
-		log("etag.go:getEtagData("+cip+")", err)
-		return ""
-	}
-	rows.Next()
-	defer rows.Close()
-	err = rows.Err()
-	var out string
-	rows.Scan(&out)
-	if err != nil {
-		log("etag.go:getEtagData("+cip+")", err)
-		return ""
-	}
-	return out
-}
 func getEtagIds(cip string) (string, int) {
 	rows, err := getetagids.Query(cip)
 	if err != nil {
@@ -117,12 +92,12 @@ func getEtagIds(cip string) (string, int) {
 	return out, length
 }
 
-func setEtag(cip string, tag string, value string, ids string) {
-	if len(value) == 0 || len(ids) == 0 {
-		log("etag.go:setEtag("+cip+")", "Invalid Data received")
+func setEtag(cip string, tag string, ids string, length int) {
+	if len(ids) == 0 || length == 0 {
+		log("etag.go:setEtag("+cip+")", "Invalid Data Received!")
 		return
 	}
-	_, err := setetag.Exec(cip, tag, value, ids, len(value))
+	_, err := setetag.Exec(cip, tag, ids, length)
 	if err != nil {
 		log("etag.go:setEtag("+cip+")", err)
 	}
@@ -134,35 +109,3 @@ func killEtag(cip string) {
 		log("etag.go:killEtag("+cip+")", err)
 	}
 }
-
-/*
-//REDIS:
-
-func getEtag(cip string) string {
-	data, err := redisClient.Get("cip:" + cip).Result()
-	if err != nil {
-		return ""
-	}
-	go redisClient.Expire("cip:"+cip, 1*time.Hour).Result()
-	return data
-}
-
-func getEtagData(cip string) []byte {
-	data, err := redisClient.Get("etag:" + cip).Result()
-	if err != nil {
-		return []byte("")
-	}
-	go redisClient.Expire("etag:"+cip, 1*time.Hour).Result()
-	return []byte(data)
-}
-
-func setEtag(cip string, tag string, value []byte) {
-	redisClient.SetNX("cip:"+cip, tag, 1*time.Hour).Err()
-	redisClient.SetNX("etag:"+cip, value, 1*time.Hour).Err()
-}
-
-func killEtag(cip string) {
-	redisClient.Del("cip:" + cip).Err()
-	redisClient.Del("etag:" + cip).Err()
-}
-*/

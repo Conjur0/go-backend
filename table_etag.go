@@ -10,27 +10,20 @@ func tablesInitetag() {
 		name:       "etag",
 		primaryKey: "cip",
 		respKey:    "cip",
-		transform: func(t *table, k *kpage) error {
-			return nil
-		},
-		purge: func(t *table, k *kjob) string {
-			return "FALSE"
-		},
 		keys: []string{
 			"etag",
 		},
 		_columnOrder: []string{
 			"cip",
 			"etag",
-			"data",
 			"ids",
+			"len",
 		},
-		duplicates: "ON DUPLICATE KEY UPDATE etag=VALUES(etag),data=VALUES(data),ids=VALUES(ids)",
+		duplicates: "ON DUPLICATE KEY UPDATE etag=VALUES(etag)",
 		proto: []string{
 			"cip varchar(250) NOT NULL",
 			"etag varchar(250) NOT NULL",
-			"data mediumtext NOT NULL",
-			"ids mediumtext DEFAULT NULL",
+			"ids mediumtext NOT NULL",
 			"len int(11) DEFAULT NULL",
 		},
 		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",

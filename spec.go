@@ -82,7 +82,7 @@ func getSpec(fName string) {
 	if resp.StatusCode == 200 {
 		defer resp.Body.Close()
 		if _, ok := resp.Header["Etag"]; ok {
-			go setEtag(downloadPath, resp.Header["Etag"][0], "file", "1")
+			go setEtag(downloadPath, resp.Header["Etag"][0], "1", 1)
 		}
 		out, err := os.Create("spec/" + fName + ".tmp")
 		if err != nil {
