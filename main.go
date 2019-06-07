@@ -106,11 +106,11 @@ func main() {
 		for range tock.C {
 			//newKjob("get", "/v4", "/characters/{character_id}/skills/", map[string]string{"character_id": "1120048880"}, 0)
 
-			// for i := range eveRegions {
-			// 	newKjob("get", "/v1", "/markets/{region_id}/orders/", map[string]string{"region_id": strconv.Itoa(i)}, 0, tables["orders"])
-			// }
 			for i := range eveRegions {
-				newKjob("get", "/v1", "/contracts/public/{region_id}/", map[string]string{"region_id": strconv.Itoa(i)}, 0, tables["contracts"])
+				newKjob("get", "/v1", "/markets/{region_id}/orders/", map[string]string{"region_id": strconv.Itoa(eveRegions[i])}, 0, tables["orders"])
+			}
+			for i := range eveRegions {
+				newKjob("get", "/v1", "/contracts/public/{region_id}/", map[string]string{"region_id": strconv.Itoa(eveRegions[i])}, 0, tables["contracts"])
 			}
 
 		}

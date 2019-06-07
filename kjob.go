@@ -135,14 +135,14 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 	kjobStackMutex.Unlock()
 }
 func (k *kjob) LockJob(by string) {
-	// if k.jobMutexLocked {
-	// foop:
-	// 	time.Sleep(1000 * time.Millisecond)
-	// 	if k.jobMutexLocked {
-	// 		log("kjob.go:LockJob("+k.CI+")", "ERR: Job Mutex has been locked for >100ms by "+k.jobMutexLockedBy)
-	// 		goto foop
-	// 	}
-	// }
+	if k.jobMutexLocked {
+	foop:
+		time.Sleep(1000 * time.Millisecond)
+		if k.jobMutexLocked {
+			log("kjob.go:LockJob("+k.CI+")", "ERR: Job Mutex has been locked for >100ms by "+k.jobMutexLockedBy)
+			goto foop
+		}
+	}
 	k._jobMutex.Lock()
 	k.jobMutexLocked = true
 	k.jobMutexLockedBy = by
@@ -461,64 +461,39 @@ func (k *kjob) processPage() {
 
 	if k.PagesProcessed == k.Pages {
 		if k.table.prune {
-			/*
-					var tries int
-					query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
-				Again2:
-					statement, err := database.Prepare(query)
-					if err != nil {
-						log("kpage.go:processPage("+k.CI+") database.Prepare", err)
-						log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
-						tries++
-						if tries < 11 {
-							time.Sleep(1 * time.Second)
-							goto Again2
-						}
-						panic(query)
-					} else {
-						res, err := statement.Exec()
-						if err != nil {
-							log("kpage.go:processPage("+k.CI+") statement.Exec", err)
-							log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
-							tries++
-							if tries < 11 {
-								time.Sleep(1 * time.Second)
-								goto Again2
-							}
-							panic(query)
-						} else {
-							add, _ := res.RowsAffected()
-							k.RemovedRows += add
 
-						}
+			var tries int
+			query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
+			//	log("kpage.go:processPage("+k.CI+") prune", query)
+		Again2:
+			statement, err := database.Prepare(query)
+			if err != nil {
+				log("kpage.go:processPage("+k.CI+") database.Prepare", err)
+				log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
+				tries++
+				if tries < 11 {
+					time.Sleep(1 * time.Second)
+					goto Again2
+				}
+				panic(query)
+			} else {
+				res, err := statement.Exec()
+				if err != nil {
+					log("kpage.go:processPage("+k.CI+") statement.Exec", err)
+					log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
+					tries++
+					if tries < 11 {
+						time.Sleep(1 * time.Second)
+						goto Again2
 					}
-			*/
+					panic(query)
+				} else {
+					add, _ := res.RowsAffected()
+					k.RemovedRows += add
+
+				}
+			}
 		}
 		k.stopJob(false)
 	}
 }
-
-/*
-const finish_page = (treq) => {
-  if (treq.head) { var d = treq.head; } else { var d = treq; }
-  var tbl = objects.objects[d.object].props.table;
-  tasks.items[d.ci].processing_pages = tasks.items[d.ci].processing_pages.filter((e) => { return (e !== treq.page); });
-  //log(`finish_page ${treq.cip} pages remaining: ${tasks.items[d.ci].processing_pages}`);
-  let sql_needs_to_be_ran = true;
-  if ((d.ins.length >= 15000) || ((d.ins.length > 0) && (tasks.items[d.ci].processing_pages.length === 0))) {
-    d.ttlqueries++;
-    d.queries++;
-    m.sql(treq, `INSERT INTO ${tbl.name} (${tbl.columnOrder.join(",")}) VALUES ${d.ins.join(',')} ${tbl.duplicates}`, [], callback_sql);
-    //force garbage collection
-    delete d.ins;
-    d.ins = [];
-    sql_needs_to_be_ran = false;
-  }
-  if ((tasks.items[d.ci].processing_pages.length === 0) && (sql_needs_to_be_ran)) {
-    d.queries++;
-    callback_sql({ affectedRows: 0, changedRows: 0 }, treq);
-  }
-
-}
-
-*/
