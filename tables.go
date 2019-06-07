@@ -38,7 +38,16 @@ func (s sQLstring) escape() string {
 	for b, a := range replace {
 		value = strings.Replace(value, b, a, -1)
 	}
-	return value
+	return "'" + value + "'"
+}
+
+type sQLenum string
+
+func (s sQLenum) ifnull() string {
+	if s == "" {
+		return "NULL"
+	}
+	return "'" + string(s) + "'"
 }
 
 type table struct {
@@ -114,6 +123,7 @@ func tablesInit() {
 	tablesInitorders()
 	tablesInitetag()
 	tablesInitspec()
+	tablesInitcontracts()
 	for it := range tables {
 		statement, err := database.Prepare(tables[it].create())
 		if err != nil {

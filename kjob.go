@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-var minCachePct float64 = 50
+var minCachePct float64 = 5
 
 var kjobStack = make(map[int]*kjob, 4096)
 var kjobStackMutex = sync.RWMutex{}
@@ -57,18 +57,14 @@ func gokjobQueueTick(t time.Time) {
 }
 
 type kjob struct {
-	Method   string            `json:"method"`   //Method: 'get', 'put', 'update', 'delete'
-	Spec     string            `json:"spec"`     //Spec: '/v1', '/v2', '/v3', '/v4', '/v5', '/v6'
-	Endpoint string            `json:"endpoint"` //Endpoint: '/markets/{region_id}/orders/', '/characters/{character_id}/skills/'
-	Entity   map[string]string `json:"entity"`   //Entity: "region_id": "10000002", "character_id": "1120048880"
-	entity   int
-	URL      string  `json:"url"`   //URL: concat of Spec and Endpoint, with entity processed
-	CI       string  `json:"ci"`    //CI: concat of endpoint:JSON.Marshall(entity)
-	Cache    float64 `json:"cache"` //Cache: milliseconds from cache miss
-
-	Security  string  `json:"security"` //Security: EVESSO Token required or "none"
-	Token     string  `json:"token"`    //evesso access_token
-	MaxItems  int     `json:"maxItems"`
+	Method    string            `json:"method"`   //Method: 'get', 'put', 'update', 'delete'
+	Spec      string            `json:"spec"`     //Spec: '/v1', '/v2', '/v3', '/v4', '/v5', '/v6'
+	Endpoint  string            `json:"endpoint"` //Endpoint: '/markets/{region_id}/orders/', '/characters/{character_id}/skills/'
+	Entity    map[string]string `json:"entity"`   //Entity: "region_id": "10000002", "character_id": "1120048880"
+	URL       string            `json:"url"`      //URL: concat of Spec and Endpoint, with entity processed
+	CI        string            `json:"ci"`       //CI: concat of endpoint:JSON.Marshall(entity)
+	spec      specS
+	Token     string  `json:"token"` //evesso access_token
 	RunTag    int64   `json:"runTag"`
 	InsLength int     `json:"insLength"`
 	IDLength  int     `json:"idLength"`
@@ -103,65 +99,24 @@ type kjob struct {
 }
 
 func newKjob(method string, specnum string, endpoint string, entity map[string]string, pages uint16, table *table) {
-	l1, ok := spec[specnum].(map[string]interface{})
-	if ok == false {
-		log("kjob.go:newKjob()", "Invalid job received: SPEC "+specnum+" invalid")
-		return
-	}
-	l2, ok := l1["paths"].(map[string]interface{})
-	if ok == false {
-		log("kjob.go:newKjob()", "Invalid job received: PATHS not found in "+specnum)
-		return
-	}
-	l3, ok := l2[endpoint].(map[string]interface{})
-	if ok == false {
-		log("kjob.go:newKjob()", "Invalid job received: route "+endpoint+" does not exist at "+specnum)
-		return
-	}
-	tspec, ok := l3[method].(map[string]interface{})
-	if ok == false {
-		log("kjob.go:newKjob()", "Invalid job received: "+method+" is invalid for "+specnum+endpoint)
-		return
-	}
-	e := ""
-	if e, ok = entity["region_id"]; !ok {
-		if e, ok = entity["structure_id"]; !ok {
-			if e, ok = entity["character_id"]; !ok {
-				e = "0"
-			}
-		}
-	}
-	en, _ := strconv.Atoi(e)
-	sec, ok := tspec["security"]
-	ecurity := "none"
-	if ok {
-		ecurity = sec.([]interface{})[0].(map[string]interface{})["evesso"].([]interface{})[0].(string)
-	}
-	cac, ok := tspec["x-cached-seconds"].(float64)
-	if ok == false {
-		log("kjob.go:newKjob()", "Invalid job received")
+	tspec := getSpec(method, specnum, endpoint)
+	if tspec.invalid {
+		log("kjob.go:newKjob()", "Invalid job received: SPEC invalid")
 		return
 	}
 	ciString, _ := json.Marshal(entity)
-	axItems := 1
-	if xItems, ok := tspec["responses"].(map[string]interface{})["200"].(map[string]interface{})["schema"].(map[string]interface{})["maxItems"].(float64); ok {
-		axItems = int(xItems)
-	}
 	tmp := kjob{
 		Method:    method,
 		Spec:      specnum,
 		Endpoint:  endpoint,
 		Entity:    entity,
-		entity:    en,
 		Token:     "none",
 		Pages:     pages,
 		PullType:  pages,
 		URL:       fmt.Sprintf("%s%s?datasource=tranquility", specnum, endpoint),
 		heart:     time.NewTimer(30 * time.Second),
 		CI:        fmt.Sprintf("%s|%s", endpoint, ciString),
-		Cache:     cac * 1000,
-		Security:  ecurity,
-		MaxItems:  axItems,
+		spec:      tspec,
 		_jobMutex: sync.RWMutex{},
 		page:      make(map[uint16]*kpage),
 		table:     table}
@@ -218,9 +173,9 @@ func (k *kjob) print(msg string) {
 	// 	k.BytesDownloaded, k.BytesCached,
 	// 	k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs,
 	// 	kjobQueueLen, kjobQueueProcessed, kjobQueueFinished, getMetric(k.CI)))
-	log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s %.0f %s %s %d %d %.0f %d %d %d %d %d %d %d %d %d %d %d %d",
+	log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s %d %s %s %d %d %.0f %d %d %d %d %d %d %d %d %d %d %d %d",
 		k.Method, k.CI,
-		k.Cache, k.Security, k.Token,
+		k.spec.cache, k.spec.security, k.Token,
 		k.NextRun, k.Expires, k.ExpiresIn,
 		k.APICalls, k.APICache, k.APIErrors,
 		k.BytesDownloaded, k.BytesCached,
@@ -265,7 +220,7 @@ func (k *kjob) stopJob(zombie bool) {
 }
 func (k *kjob) run() {
 	//k.heart.Reset(30 * time.Second)
-	if k.Security != "none" && len(k.Token) < 5 {
+	if k.spec.security != "" && len(k.Token) < 5 {
 		log("kjob.go:k.run() "+k.CI, "todo: get token.")
 		return
 	}
@@ -298,7 +253,7 @@ func (k *kjob) requestHead() {
 	}
 	etaghdr := getEtag(k.CI)
 
-	req, err := http.NewRequest("HEAD", esiURL+k.URL, nil)
+	req, err := http.NewRequest("HEAD", c.EsiURL+k.URL, nil)
 	if err != nil {
 		log("kjob.go:k.requestHead("+k.CI+") http.NewRequest", err)
 		return
@@ -307,7 +262,7 @@ func (k *kjob) requestHead() {
 	if len(etaghdr) > 0 {
 		k.req.Header.Add("If-None-Match", etaghdr)
 	}
-	if k.Security != "none" && len(k.Token) > 5 {
+	if k.spec.security != "" && len(k.Token) > 5 {
 		k.req.Header.Add("Authorization", "Bearer "+k.Token)
 	}
 	resp, err := client.Do(k.req)
@@ -348,7 +303,7 @@ func (k *kjob) requestHead() {
 
 		var timepct float64
 		if k.ExpiresIn > 0 {
-			timepct = 100 * (float64(k.ExpiresIn) / float64(k.Cache))
+			timepct = 100 * (float64(k.ExpiresIn) / float64(k.spec.cache*1000))
 		} else {
 			timepct = 0
 		}

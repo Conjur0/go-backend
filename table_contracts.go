@@ -14,7 +14,7 @@ type contracts []contract
 type contract struct {
 	AcceptorID          int32     `json:"acceptor_id"`
 	AssigneeID          int32     `json:"assignee_id"`
-	Availability        string    `json:"availability"`
+	Availability        sQLenum   `json:"availability"`
 	Buyout              float64   `json:"buyout"`
 	Collateral          float64   `json:"collateral"`
 	ContractID          int32     `json:"contract_id"`
@@ -30,9 +30,9 @@ type contract struct {
 	Price               float64   `json:"price"`
 	Reward              float64   `json:"reward"`
 	StartLocationID     int64     `json:"start_location_id"`
-	Status              string    `json:"status"`
+	Status              sQLenum   `json:"status"`
 	Title               sQLstring `json:"title"`
-	Type                string    `json:"type"`
+	Type                sQLenum   `json:"type"`
 	Volume              float64   `json:"volume"`
 }
 
@@ -52,14 +52,19 @@ func tablesInitcontracts() {
 			k.Ins.Grow(length * 104)
 			comma := ""
 			for it := range contract {
-
-				fmt.Fprintf(&k.Ins, "%s(%d,%d,'%s',%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,'%s','%s','%s',%f)", comma,
-					contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability,
+				if contract[it].Status == "" {
+					contract[it].Status = "outstanding"
+				}
+				if contract[it].Availability == "" {
+					contract[it].Availability = "public"
+				}
+				fmt.Fprintf(&k.Ins, "%s(%d,%d,%s,%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,%s,%s,%s,%f)", comma,
+					contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability.ifnull(),
 					contract[it].Buyout, contract[it].Collateral, contract[it].ContractID, contract[it].DateAccepted.toSQLDate(),
 					contract[it].DateCompleted.toSQLDate(), contract[it].DateExpired.toSQLDate(), contract[it].DateIssued.toSQLDate(),
 					contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(),
 					contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward,
-					contract[it].StartLocationID, contract[it].Status, contract[it].Title.escape(), contract[it].Type, contract[it].Volume)
+					contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
 				comma = ","
 			}
 			if k.dead || !k.job.running {
@@ -86,10 +91,10 @@ func tablesInitcontracts() {
 			"start_location_id",
 			"status",
 			"type",
-			"date_accepted_day",
-			"date_completed_day",
-			"date_expired_day",
-			"date_issued_day",
+			"date_accepted_hour",
+			"date_completed_hour",
+			"date_expired_hour",
+			"date_issued_hour",
 		},
 		_columnOrder: []string{
 			"acceptor_id",
@@ -115,7 +120,7 @@ func tablesInitcontracts() {
 			"type",
 			"volume",
 		},
-		duplicates: "ON DUPLICATE KEY UPDATE source=IF(ISNULL(VALUES(owner)),VALUES(source),source),owner=VALUES(owner),issued=VALUES(issued),price=VALUES(price),volume_remain=VALUES(volume_remain)",
+		duplicates: "ON DUPLICATE KEY UPDATE acceptor_id=VALUES(acceptor_id),date_accepted=VALUES(date_accepted),date_completed=VALUES(date_completed),status=VALUES(status)",
 		proto: []string{
 			"position int(11) NOT NULL DEFAULT -1000",
 			"acceptor_id bigint(20) DEFAULT NULL",

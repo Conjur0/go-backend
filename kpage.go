@@ -195,7 +195,7 @@ func (k *kpage) requestPage() {
 	}
 	etaghdr := getEtag(k.cip)
 
-	req, err := http.NewRequest(strings.ToUpper(k.job.Method), esiURL+k.job.URL+"&page="+strconv.Itoa(int(k.page)), nil)
+	req, err := http.NewRequest(strings.ToUpper(k.job.Method), c.EsiURL+k.job.URL+"&page="+strconv.Itoa(int(k.page)), nil)
 	if err != nil {
 		log("kpage.go:k.requestPage("+k.cip+") http.NewRequest", err)
 		k.job.LockJob("kpage.go:205")
@@ -209,7 +209,7 @@ func (k *kpage) requestPage() {
 		k.req.Header.Add("If-None-Match", etaghdr)
 		//log("kpage.go:k.requestPage("+k.cip+") etaghdr", "Attach "+etaghdr)
 	}
-	if k.job.Security != "none" && len(k.job.Token) > 5 {
+	if k.job.spec.security != "" && len(k.job.Token) > 5 {
 		k.req.Header.Add("Authorization", "Bearer "+k.job.Token)
 		//log("kpage.go:k.requestPage("+k.cip+") Security", "Attach "+k.job.Token)
 	}

@@ -14,7 +14,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-var configFile = "../config.json"
+var configFile = "./config.json"
 
 type conf struct {
 	EsiURL  string  `json:"esi_url"`
@@ -120,7 +120,7 @@ func parseSpec(path string) {
 			}
 			//find responses
 			var ok bool
-			var resp Responses
+			var resp responses
 			if resp, ok = tmp.Paths[endpoint][method].Responses["200"]; !ok {
 				if resp, ok = tmp.Paths[endpoint][method].Responses["201"]; !ok {
 					if resp, ok = tmp.Paths[endpoint][method].Responses["204"]; !ok {
@@ -144,7 +144,7 @@ func parseSpec(path string) {
 	if b.Len() > 0 {
 		database.Query(fmt.Sprintf("INSERT INTO `karkinos`.`spec` (method,spec,endpoint,security,cache,items,paged) VALUES %s ON DUPLICATE KEY UPDATE security=VALUES(security),cache=VALUES(cache),items=VALUES(items),paged=VALUES(paged)", b.String()))
 	}
-	log("spec.go:parseSpec()", fmt.Sprintf("Processed %d items for %s://%s%s\n\n", entries, tmp.Schemes[0], tmp.Host, tmp.BasePath))
+	log("spec.go:parseSpec()", fmt.Sprintf("Processed %d items for %s://%s%s\n", entries, tmp.Schemes[0], tmp.Host, tmp.BasePath))
 
 	wg.Done()
 }
@@ -152,31 +152,31 @@ func parseSpec(path string) {
 type specdef struct {
 	BasePath string                          `json:"basePath"`
 	Host     string                          `json:"host"`
-	Paths    map[string]map[string]Operation `json:"paths"`
+	Paths    map[string]map[string]operation `json:"paths"`
 	Schemes  []string                        `json:"schemes"`
 }
 
-type Operation struct {
-	Responses      map[string]Responses `json:"responses"`
-	Security       []Security           `json:"security"`
+type operation struct {
+	Responses      map[string]responses `json:"responses"`
+	Security       []security           `json:"security"`
 	XCachedSeconds int64                `json:"x-cached-seconds"`
 }
 
-type Responses struct {
-	Headers Headers `json:"headers"`
-	Schema  Schema  `json:"schema"`
+type responses struct {
+	Headers headers `json:"headers"`
+	Schema  schema  `json:"schema"`
 }
-type Security struct {
+type security struct {
 	Evesso []string `json:"evesso"`
 }
 
-type Headers struct {
-	XPages Headerdef `json:"X-Pages"`
+type headers struct {
+	XPages headerdef `json:"X-Pages"`
 }
-type Headerdef struct {
+type headerdef struct {
 	Type string `json:"type"`
 }
 
-type Schema struct {
+type schema struct {
 	MaxItems int64 `json:"maxItems"`
 }

@@ -33,12 +33,9 @@ func tablesInitspec() {
 }
 
 type specS struct {
-	method   string
-	spec     string
-	endpoint string
+	invalid  bool
 	security string
 	cache    int
 	items    int
 	paged    bool
-	status   string
 }
