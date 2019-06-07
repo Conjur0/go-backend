@@ -84,7 +84,6 @@ type kjob struct {
 	PagesProcessed   uint16        `json:"pagesProcessed"` //count of completed pages (excluding heads)
 	PagesQueued      uint16        `json:"pagesQueued"`    //cumlative count of pages queued
 	Records          int           `json:"records"`        //cumlative count of records
-	ChangedRows      int           `json:"changedRows"`    //cumlative count of changed records
 	AffectedRows     int64         `json:"affectedRows"`   //cumlative count of affected records
 	RemovedRows      int64         `json:"removedRows"`    //cumlative count of removed records
 	Runs             int           `json:"runs"`
@@ -135,14 +134,14 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 	kjobStackMutex.Unlock()
 }
 func (k *kjob) LockJob(by string) {
-	if k.jobMutexLocked {
-	foop:
-		time.Sleep(1000 * time.Millisecond)
-		if k.jobMutexLocked {
-			log("kjob.go:LockJob("+k.CI+")", "ERR: Job Mutex has been locked for >100ms by "+k.jobMutexLockedBy)
-			goto foop
-		}
-	}
+	// if k.jobMutexLocked {
+	// foop:
+	// 	time.Sleep(1000 * time.Millisecond)
+	// 	if k.jobMutexLocked {
+	// 		log("kjob.go:LockJob("+k.CI+")", "ERR: Job Mutex has been locked for >100ms by "+k.jobMutexLockedBy)
+	// 		goto foop
+	// 	}
+	// }
 	k._jobMutex.Lock()
 	k.jobMutexLocked = true
 	k.jobMutexLockedBy = by
@@ -195,8 +194,8 @@ func (k *kjob) start() {
 func (k *kjob) stopJob(zombie bool) {
 	//todo: final sql write, store metrics
 	//k.mutex.Lock() **Should be locked in a wrapper around the call to this.
-	log("kjob.go:k.stopJob("+k.CI+")", fmt.Sprintf("%t Pages:%d/%d Cached:%db DL:%db Records:%d Changed:%d Affected:%d Removed:%d ETRO: %dms", zombie, k.PagesProcessed, k.Pages, k.BytesCached, k.BytesDownloaded,
-		k.Records, k.ChangedRows, k.AffectedRows, k.RemovedRows, k.Expires-ktime()))
+	log("kjob.go:k.stopJob("+k.CI+")", fmt.Sprintf("%t Pages:%d/%d Cached:%db DL:%db Records:%d Affected:%d Removed:%d ETRO: %dms", zombie, k.PagesProcessed, k.Pages, k.BytesCached, k.BytesDownloaded,
+		k.Records, k.AffectedRows, k.RemovedRows, k.Expires-ktime()))
 	k.heart.Stop()
 	for it := range k.page {
 		k.page[it].destroy()
@@ -213,7 +212,6 @@ func (k *kjob) stopJob(zombie bool) {
 	k.PagesProcessed = 0
 	k.PagesQueued = 0
 	k.Records = 0
-	k.ChangedRows = 0
 	k.AffectedRows = 0
 	k.RemovedRows = 0
 	//k.mutex.Unlock()
@@ -346,6 +344,7 @@ func (k *kjob) processPage() {
 	defer k.UnlockJob()
 	k.PagesProcessed++
 	pagesFinished++
+	var tries int
 
 	//update last_seen on cached entries
 	// if prune enabled, and:
@@ -353,7 +352,7 @@ func (k *kjob) processPage() {
 	//  non-zero cached ids ready, and this is the last page
 	if k.table.prune && ((k.IDLength >= 15000) || ((k.IDLength > 0) && k.PagesProcessed == k.Pages)) {
 		var b strings.Builder
-		var tries int
+		tries = 0
 		comma := ""
 		for it := range k.page {
 			k.page[it].pageMutex.Lock()
@@ -404,7 +403,7 @@ func (k *kjob) processPage() {
 	//  non-zero records ready, and this is the last page
 	if (k.InsLength >= 15000) || ((k.InsLength > 0) && k.PagesProcessed == k.Pages) {
 		var b strings.Builder
-		var tries int
+		tries = 0
 		comma := ""
 		for it := range k.page {
 			k.page[it].pageMutex.Lock()
@@ -461,15 +460,14 @@ func (k *kjob) processPage() {
 
 	if k.PagesProcessed == k.Pages {
 		if k.table.prune {
-
-			var tries int
+			tries = 0
 			query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
 			//	log("kpage.go:processPage("+k.CI+") prune", query)
 		Again2:
 			statement, err := database.Prepare(query)
 			if err != nil {
 				log("kpage.go:processPage("+k.CI+") database.Prepare", err)
-				log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
+				log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: %s", query))
 				tries++
 				if tries < 11 {
 					time.Sleep(1 * time.Second)
@@ -480,7 +478,7 @@ func (k *kjob) processPage() {
 				res, err := statement.Exec()
 				if err != nil {
 					log("kpage.go:processPage("+k.CI+") statement.Exec", err)
-					log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
+					log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: %s", query))
 					tries++
 					if tries < 11 {
 						time.Sleep(1 * time.Second)
