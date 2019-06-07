@@ -266,24 +266,31 @@ func (k *kpage) requestPage() {
 		k.job.BytesDownloaded += len(k.body)
 		k.job.UnlockJob()
 	} else if resp.StatusCode == 304 {
-		ids, length := getEtagIds(k.cip)
-		k.InsIds.WriteString(ids)
-		if length == 0 || len(ids) == 0 {
-			log("kpage.go:k.requestPage("+k.cip+") getEtagData", "No Data returned!")
-			killEtag(k.cip)
-			k.job.LockJob("kpage.go:280")
-			k.job.PagesQueued--
-			k.job.newPage(k.page)
+		if k.job.table.prune {
+			ids, length := getEtagIds(k.cip)
+			k.InsIds.WriteString(ids)
+			if length == 0 || len(ids) == 0 {
+				log("kpage.go:k.requestPage("+k.cip+") getEtagData", "No Data returned!")
+				killEtag(k.cip)
+				k.job.LockJob("kpage.go:280")
+				k.job.PagesQueued--
+				k.job.newPage(k.page)
+				k.job.UnlockJob()
+				return
+			}
+			foo := strings.Split(ids, ",")
+			bCached += length
+			k.job.LockJob("kpage.go:288")
+			k.job.BytesCached += length
+			k.job.IDLength += len(foo)
+			k.job.APICache++
 			k.job.UnlockJob()
-			return
+		} else {
+			k.job.LockJob("kpage.go:289")
+			k.job.BytesCached++
+			k.job.APICache++
+			k.job.UnlockJob()
 		}
-		foo := strings.Split(ids, ",")
-		bCached += length
-		k.job.LockJob("kpage.go:288")
-		k.job.BytesCached += length
-		k.job.IDLength += len(foo)
-		k.job.APICache++
-		k.job.UnlockJob()
 	}
 
 	if resp.StatusCode == 200 || resp.StatusCode == 304 {
@@ -313,6 +320,9 @@ func (k *kpage) requestPage() {
 				k.job.PagesQueued--
 				k.job.newPage(k.page)
 				k.job.UnlockJob()
+			}
+			if !k.job.table.prune {
+				k.InsIds.WriteString("1")
 			}
 			setEtag(k.cip, k.etag, k.InsIds.String(), len(k.body))
 		} else {

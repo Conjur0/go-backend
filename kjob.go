@@ -393,7 +393,10 @@ func (k *kjob) processPage() {
 	pagesFinished++
 
 	//update last_seen on cached entries
-	if (k.IDLength >= 15000) || ((k.IDLength > 0) && k.PagesProcessed == k.Pages) {
+	// if prune enabled, and:
+	//  15000+ cached ids ready, or
+	//  non-zero cached ids ready, and this is the last page
+	if k.table.prune && ((k.IDLength >= 15000) || ((k.IDLength > 0) && k.PagesProcessed == k.Pages)) {
 		var b strings.Builder
 		var tries int
 		comma := ""
@@ -441,6 +444,9 @@ func (k *kjob) processPage() {
 		}
 	}
 
+	//insert records if:
+	//  15000+ records ready, or
+	//  non-zero records ready, and this is the last page
 	if (k.InsLength >= 15000) || ((k.InsLength > 0) && k.PagesProcessed == k.Pages) {
 		var b strings.Builder
 		var tries int
@@ -499,25 +505,15 @@ func (k *kjob) processPage() {
 	}
 
 	if k.PagesProcessed == k.Pages {
-		/*
-				var tries int
-				query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
-			Again2:
-				statement, err := database.Prepare(query)
-				if err != nil {
-					log("kpage.go:processPage("+k.CI+") database.Prepare", err)
-					log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
-					tries++
-					if tries < 11 {
-						time.Sleep(1 * time.Second)
-						goto Again2
-					}
-					panic(query)
-				} else {
-					res, err := statement.Exec()
+		if k.table.prune {
+			/*
+					var tries int
+					query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
+				Again2:
+					statement, err := database.Prepare(query)
 					if err != nil {
-						log("kpage.go:processPage("+k.CI+") statement.Exec", err)
-						log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
+						log("kpage.go:processPage("+k.CI+") database.Prepare", err)
+						log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
 						tries++
 						if tries < 11 {
 							time.Sleep(1 * time.Second)
@@ -525,12 +521,24 @@ func (k *kjob) processPage() {
 						}
 						panic(query)
 					} else {
-						add, _ := res.RowsAffected()
-						k.RemovedRows += add
+						res, err := statement.Exec()
+						if err != nil {
+							log("kpage.go:processPage("+k.CI+") statement.Exec", err)
+							log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)DELETE FROM `%s`.`%s` WHERE ...", len(query), k.table.database, k.table.name))
+							tries++
+							if tries < 11 {
+								time.Sleep(1 * time.Second)
+								goto Again2
+							}
+							panic(query)
+						} else {
+							add, _ := res.RowsAffected()
+							k.RemovedRows += add
 
+						}
 					}
-				}
-		*/
+			*/
+		}
 		k.stopJob(false)
 	}
 }

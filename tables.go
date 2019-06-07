@@ -6,15 +6,47 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 )
+
+type eveDate string
+
+func (s eveDate) toSQLDate() string {
+	parse, err := time.Parse("2006-01-02T15:04:05Z", string(s))
+	if err != nil {
+		return "NULL"
+	}
+	return strconv.Itoa(int(parse.UnixNano() / int64(time.Millisecond)))
+}
+
+type boool bool
+
+func (b boool) toSQL() int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+type sQLstring string
+
+func (s sQLstring) escape() string {
+	replace := map[string]string{"'": `\'`, "\\0": "\\\\0", "\n": "\\n", "\r": "\\r", `"`: `\"`, "\x1a": "\\Z"}
+	value := strings.Replace(string(s), `\`, `\\`, -1)
+	for b, a := range replace {
+		value = strings.Replace(value, b, a, -1)
+	}
+	return value
+}
 
 type table struct {
 	database     string
 	name         string
 	primaryKey   string
 	keys         []string
-	respKey      string
+	prune        bool
 	transform    func(t *table, k *kpage) error
 	purge        func(t *table, k *kjob) string
 	_columnOrder []string

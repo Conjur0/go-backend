@@ -19,7 +19,6 @@ func tablesInitspec() {
 			"items",
 			"paged",
 		},
-		duplicates: "ON DUPLICATE KEY UPDATE etag=VALUES(etag)",
 		proto: []string{
 			"method VARCHAR(12) NOT NULL",
 			"spec VARCHAR(10) NOT NULL",
@@ -33,12 +32,13 @@ func tablesInitspec() {
 	}
 }
 
-/*
-CREATE TABLE `karkinos`.`spec` (
-	 `mse` VARCHAR(250) NOT NULL ,
-		`security` VARCHAR(250) NOT NULL ,
-		 `cache` INT NOT NULL ,
-			`items` INT NOT NULL ,
-			 `paged` TINYINT NOT NULL ,
-			  PRIMARY KEY (`mse`)) ENGINE = MyISAM;
-*/
+type specS struct {
+	method   string
+	spec     string
+	endpoint string
+	security string
+	cache    int
+	items    int
+	paged    bool
+	status   string
+}

@@ -8,15 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 )
 
 type orders []ordersElement
 
 type ordersElement struct {
 	Duration     uint32  `json:"duration"`
-	IsBuyOrder   bool    `json:"is_buy_order"`
-	Issued       string  `json:"issued"`
+	IsBuyOrder   boool   `json:"is_buy_order"`
+	Issued       eveDate `json:"issued"`
 	LocationID   uint64  `json:"location_id"`
 	MinVolume    uint32  `json:"min_volume"`
 	OrderID      uint64  `json:"order_id"`
@@ -33,7 +32,7 @@ func tablesInitorders() {
 		database:   "karkinos",
 		name:       "orders",
 		primaryKey: "order_id",
-		respKey:    "order_id",
+		prune:      true,
 		transform: func(t *table, k *kpage) error {
 			var jsonData orders
 			if err := json.Unmarshal(k.body, &jsonData); err != nil {
@@ -59,6 +58,7 @@ func tablesInitorders() {
 			length := len(jsonData)
 			k.pageMutex.Lock()
 			k.Ins.Grow(length * 104)
+			k.InsIds.Grow(length * 11)
 			comma := ","
 			length--
 			for it := range jsonData {
@@ -66,15 +66,7 @@ func tablesInitorders() {
 				if length == it {
 					comma = ""
 				}
-				issued, err := time.Parse("2006-01-02T15:04:05Z", jsonData[it].Issued)
-				if err != nil {
-					return errors.New("unable to parse issued time")
-				}
-				var ibo int8
-				if jsonData[it].IsBuyOrder {
-					ibo = 1
-				}
-				fmt.Fprintf(&k.Ins, "(%s,%s,%d,%d,%d,%d,%d,%d,%f,'%s',%d,%d,%d,%d)%s", entity, owner, jsonData[it].Duration, ibo, issued.UnixNano()/int64(time.Millisecond), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, runtag, comma)
+				fmt.Fprintf(&k.Ins, "(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d,%d)%s", entity, owner, jsonData[it].Duration, jsonData[it].IsBuyOrder.toSQL(), jsonData[it].Issued.toSQLDate(), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, runtag, comma)
 				fmt.Fprintf(&k.InsIds, "%d%s", jsonData[it].OrderID, comma)
 			}
 			if k.dead || !k.job.running {

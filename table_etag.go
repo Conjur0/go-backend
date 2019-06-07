@@ -9,7 +9,6 @@ func tablesInitetag() {
 		database:   "karkinos",
 		name:       "etag",
 		primaryKey: "cip",
-		respKey:    "cip",
 		keys: []string{
 			"etag",
 		},
