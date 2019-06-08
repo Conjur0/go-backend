@@ -5,6 +5,8 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -33,4 +35,52 @@ func sqlInit() {
 	// 	rows.Scan(&id, &firstname, &lastname)
 	// 	fmt.Println(strconv.Itoa(id) + ": " + firstname + " " + lastname)
 	// }
+}
+func safeQuery(query string) int64 {
+Again:
+	statement, err := database.Prepare(query)
+	defer statement.Close()
+	if err != nil {
+		var tries int
+		var logquery string
+		if len(query) > 505 {
+			logquery = query[:250] + " ... " + query[len(query)-250:]
+		} else {
+			logquery = query
+		}
+		log("sql.go:safeQuery() database.Prepare", err)
+		log("sql.go:safeQuery() database.Prepare", fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
+		tries++
+		if tries < 11 {
+			time.Sleep(1 * time.Second)
+			goto Again
+		}
+		panic(query)
+	} else {
+		res, err := statement.Exec()
+		if err != nil {
+			var tries int
+			var logquery string
+			if len(query) > 505 {
+				logquery = query[:250] + " ... " + query[len(query)-250:]
+			} else {
+				logquery = query
+			}
+			log("sql.go:safeQuery() statement.Exec", err)
+			log("sql.go:safeQuery() statement.Exec", fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
+			tries++
+			if tries < 11 {
+				time.Sleep(1 * time.Second)
+				goto Again
+			}
+			panic(query)
+		} else {
+			aff, err := res.RowsAffected()
+			if err != nil {
+				log("sql.go:safeQuery() res.RowsAffected", err)
+				aff = 0
+			}
+			return aff
+		}
+	}
 }

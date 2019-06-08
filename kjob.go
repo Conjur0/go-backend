@@ -83,7 +83,7 @@ type kjob struct {
 	Pages            uint16        `json:"pages"`          //Pages: 0, 1
 	PagesProcessed   uint16        `json:"pagesProcessed"` //count of completed pages (excluding heads)
 	PagesQueued      uint16        `json:"pagesQueued"`    //cumlative count of pages queued
-	Records          int           `json:"records"`        //cumlative count of records
+	Records          int64         `json:"records"`        //cumlative count of records
 	AffectedRows     int64         `json:"affectedRows"`   //cumlative count of affected records
 	RemovedRows      int64         `json:"removedRows"`    //cumlative count of removed records
 	Runs             int           `json:"runs"`
@@ -152,6 +152,37 @@ func (k *kjob) UnlockJob() {
 	k._jobMutex.Unlock()
 }
 
+// returns all Finished Cached (304) Pages' InsIds, and clears InsIds
+func (k *kjob) getCachedInsIds() string {
+	var b strings.Builder
+	comma := ""
+	for it := range k.page {
+		k.page[it].pageMutex.Lock()
+		if k.page[it].InsReady && (k.page[it].Ins.Len() == 0) && (k.page[it].InsIds.Len() > 0) {
+			fmt.Fprintf(&b, "%s%s", comma, k.page[it].InsIds.String())
+			k.page[it].InsIds.Reset()
+			comma = ","
+		}
+		k.page[it].pageMutex.Unlock()
+	}
+	return b.String()
+}
+
+// returns all Finished (200) Pages' Ins, and clears Ins
+func (k *kjob) getIns() string {
+	var b strings.Builder
+	comma := ""
+	for it := range k.page {
+		k.page[it].pageMutex.Lock()
+		if k.page[it].InsReady && (k.page[it].Ins.Len() > 0) {
+			fmt.Fprintf(&b, "%s%s", comma, k.page[it].Ins.String())
+			k.page[it].Ins.Reset()
+			comma = ","
+		}
+		k.page[it].pageMutex.Unlock()
+	}
+	return b.String()
+}
 func (k *kjob) beat() {
 	k.print("ZOMBIE")
 	k.LockJob("kjob.go:198")
@@ -344,153 +375,44 @@ func (k *kjob) processPage() {
 	defer k.UnlockJob()
 	k.PagesProcessed++
 	pagesFinished++
-	var tries int
 
-	//update last_seen on cached entries
-	// if prune enabled, and:
+	//update last_seen on cached entries if
 	//  15000+ cached ids ready, or
 	//  non-zero cached ids ready, and this is the last page
-	if k.table.prune && ((k.IDLength >= 15000) || ((k.IDLength > 0) && k.PagesProcessed == k.Pages)) {
-		var b strings.Builder
-		tries = 0
-		comma := ""
-		for it := range k.page {
-			k.page[it].pageMutex.Lock()
-			if k.page[it].InsReady && (k.page[it].Ins.Len() == 0) && (k.page[it].InsIds.Len() > 0) {
-				fmt.Fprintf(&b, "%s%s", comma, k.page[it].InsIds.String())
-				k.page[it].InsIds.Reset()
-				comma = ","
-			}
-			k.page[it].pageMutex.Unlock()
-		}
-		if b.Len() == 0 {
+	if (k.IDLength >= 15000) || ((k.IDLength > 0) && k.PagesProcessed == k.Pages) {
+
+		cachedInsIds := k.getCachedInsIds()
+		if len(cachedInsIds) == 0 {
 			log("kjob.go:processPage()", "Memory read error")
 			k.stopJob(false)
 			return
 		}
-		query := fmt.Sprintf("UPDATE `%s`.`%s` SET last_seen=%d WHERE %s IN (%s)", k.table.database, k.table.name, k.RunTag, k.table.primaryKey, b.String())
-	Again0:
-		statement, err := database.Prepare(query)
-		if err != nil {
-			log("kpage.go:processPage("+k.CI+") database.Prepare", err)
-			log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)UPDATE `%s`.`%s` SET last_seen=%d WHERE %s IN (...)", len(query), k.table.database, k.table.name, k.RunTag, k.table.primaryKey))
-			tries++
-			if tries < 11 {
-				time.Sleep(1 * time.Second)
-				goto Again0
-			}
-			panic(query)
-		} else {
-			_, err := statement.Exec()
-			if err != nil {
-				log("kpage.go:processPage("+k.CI+") statement.Exec", err)
-				log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)UPDATE `%s`.`%s` SET last_seen=%d WHERE %s IN (...)", len(query), k.table.database, k.table.name, k.RunTag, k.table.primaryKey))
-				tries++
-				if tries < 11 {
-					time.Sleep(1 * time.Second)
-					goto Again0
-				}
-				panic(query)
-			} else {
-				k.Records += k.IDLength
-				k.IDLength = 0
-			}
-		}
+		query := fmt.Sprintf("UPDATE `%s`.`%s` SET last_seen=%d WHERE %s IN (%s)", k.table.database, k.table.name, k.RunTag, k.table.primaryKey, cachedInsIds)
+		k.Records += safeQuery(query)
+		k.IDLength = 0
 	}
 
 	//insert records if:
 	//  15000+ records ready, or
 	//  non-zero records ready, and this is the last page
 	if (k.InsLength >= 15000) || ((k.InsLength > 0) && k.PagesProcessed == k.Pages) {
-		var b strings.Builder
-		tries = 0
-		comma := ""
-		for it := range k.page {
-			k.page[it].pageMutex.Lock()
-			if k.page[it].InsReady && (k.page[it].Ins.Len() > 0) {
-				fmt.Fprintf(&b, "%s%s", comma, k.page[it].Ins.String())
-				k.page[it].Ins.Reset()
-				comma = ","
-			}
-			k.page[it].pageMutex.Unlock()
-		}
-		if b.Len() == 0 {
+		getIds := k.getIns()
+		if len(getIds) == 0 {
 			log("kjob.go:processPage()", "Memory read error")
 			k.stopJob(false)
 			return
 		}
-		query := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s",
-			k.table.database,
-			k.table.name,
-			k.table.columnOrder(),
-			b.String(),
-			k.table.duplicates,
-		)
-	Again1:
-		statement, err := database.Prepare(query)
-		if err != nil {
-			log("kpage.go:processPage("+k.CI+") database.Prepare", err)
-			log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: (%d)INSERT INTO `%s`.`%s` (%s) VALUES ...[%d items]... %s", len(query), k.table.database, k.table.name, k.table.columnOrder(), k.InsLength, k.table.duplicates))
-			tries++
-			if tries < 11 {
-				time.Sleep(1 * time.Second)
-				goto Again1
-			}
-			panic(query)
-		} else {
-			res, err := statement.Exec()
-			if err != nil {
-				log("kpage.go:processPage("+k.CI+") statement.Exec", err)
-				log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: (%d)INSERT INTO `%s`.`%s` (%s) VALUES ...[%d items]... %s", len(query), k.table.database, k.table.name, k.table.columnOrder(), k.InsLength, k.table.duplicates))
-				tries++
-				if tries < 11 {
-					time.Sleep(1 * time.Second)
-					goto Again1
-				}
-				panic(query)
-			} else {
-				add, _ := res.RowsAffected()
-				k.AffectedRows += add
-				k.Records += k.InsLength
-				k.InsLength = 0
-
-			}
-		}
+		query := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), getIds, k.table.duplicates)
+		tmp := safeQuery(query)
+		k.Records += tmp
+		k.AffectedRows += tmp
+		k.InsLength = 0
 	}
 
 	if k.PagesProcessed == k.Pages {
 		if k.table.prune {
-			tries = 0
 			query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
-			//	log("kpage.go:processPage("+k.CI+") prune", query)
-		Again2:
-			statement, err := database.Prepare(query)
-			if err != nil {
-				log("kpage.go:processPage("+k.CI+") database.Prepare", err)
-				log("kpage.go:processPage("+k.CI+") database.Prepare", fmt.Sprintf("Query was: %s", query))
-				tries++
-				if tries < 11 {
-					time.Sleep(1 * time.Second)
-					goto Again2
-				}
-				panic(query)
-			} else {
-				res, err := statement.Exec()
-				if err != nil {
-					log("kpage.go:processPage("+k.CI+") statement.Exec", err)
-					log("kpage.go:processPage("+k.CI+") statement.Exec", fmt.Sprintf("Query was: %s", query))
-					tries++
-					if tries < 11 {
-						time.Sleep(1 * time.Second)
-						goto Again2
-					}
-					panic(query)
-				} else {
-					add, _ := res.RowsAffected()
-					k.RemovedRows += add
-
-				}
-			}
+			k.RemovedRows += safeQuery(query)
 		}
 		k.stopJob(false)
 	}

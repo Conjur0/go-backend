@@ -51,10 +51,10 @@ func (s sQLenum) ifnull() string {
 }
 
 type table struct {
-	database     string   //Database Name
-	name         string   //Table Name
-	primaryKey   string   //Primary BTREE Index (multiple fields separated with :)
-	keys         []string //Other Indexes (multiple fields separated with :)
+	database     string
+	name         string
+	primaryKey   string
+	keys         []string
 	prune        bool
 	transform    func(t *table, k *kpage) error
 	purge        func(t *table, k *kjob) string
@@ -67,14 +67,18 @@ type table struct {
 
 func (t *table) columnOrder() string {
 	var b strings.Builder
-	comma := ""
+	comma := ","
+	length := len(t._columnOrder)
+	b.Grow(length * 12)
+	length--
 	for it := range t._columnOrder {
-		fmt.Fprintf(&b, "%s%s", comma, t._columnOrder[it])
-		comma = ","
+		if it == length {
+			comma = ""
+		}
+		fmt.Fprintf(&b, "%s%s", t._columnOrder[it], comma)
 	}
 	return b.String()
 }
-
 func (t *table) create() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "CREATE TABLE IF NOT EXISTS `%s`.`%s` (\n", t.database, t.name)
@@ -121,7 +125,14 @@ func tablesInit() {
 	tablesInitspec()
 	tablesInitcontracts()
 	for it := range tables {
-		safeQuery(tables[it].create())
+		statement, err := database.Prepare(tables[it].create())
+		if err != nil {
+			panic(err)
+		}
+		_, err = statement.Exec()
+		if err != nil {
+			panic(err)
+		}
 		log("tables.go:initTables()", fmt.Sprintf("Initialized table %s", it))
 	}
 

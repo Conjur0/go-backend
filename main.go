@@ -88,6 +88,11 @@ func readConfigJSON() {
 }
 
 func main() {
+	blah := make(map[int]string, 500000000)
+	blah[31337] = "poo"
+}
+
+func rmain() {
 	log("main.go:main()", "Hello World!")
 	readConfigJSON()
 	metrics = make(map[string]int64)
