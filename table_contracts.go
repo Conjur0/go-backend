@@ -41,7 +41,7 @@ func tablesInitcontracts() {
 		database:   "karkinos",
 		name:       "contracts",
 		primaryKey: "contract_id",
-		transform: func(t *table, k *kpage) error {
+		handlePageData: func(t *table, k *kpage) error {
 			var contract contracts
 			if err := json.Unmarshal(k.body, &contract); err != nil {
 				return err
@@ -72,16 +72,16 @@ func tablesInitcontracts() {
 			}
 			k.InsReady = true
 			k.pageMutex.Unlock()
-			k.job.LockJob("table_contracts.go:90")
+			k.job.LockJob()
 			k.job.InsLength += length
 			k.job.UnlockJob()
 			k.pageMutex.Lock()
 			defer k.pageMutex.Unlock()
 			return nil
 		},
-		purge: func(t *table, k *kjob) string {
+		handleEndGood: func(t *table, k *kjob) int64 {
 			//			return fmt.Sprintf("UPDATE `%s`.`%s` SET status='' WHERE source = %s AND NOT last_seen = %d", t.database, t.name, k.RunTag)
-			return ""
+			return 0
 		},
 		keys: []string{
 			"acceptor_id",

@@ -32,28 +32,10 @@ func tablesInitorders() {
 		database:   "karkinos",
 		name:       "orders",
 		primaryKey: "order_id",
-		prune:      true,
-		transform: func(t *table, k *kpage) error {
+		handlePageData: func(t *table, k *kpage) error {
 			var jsonData orders
 			if err := json.Unmarshal(k.body, &jsonData); err != nil {
 				return err
-			}
-			var entity string
-			var ok bool
-			owner := "NULL"
-			k.job.LockJob("table_orders.go:47")
-			tmp := k.job.Entity
-			runtag := k.job.RunTag
-			k.job.UnlockJob()
-
-			if entity, ok = tmp["region_id"]; !ok {
-				if entity, ok = tmp["structure_id"]; !ok {
-					if entity, ok = tmp["character_id"]; ok {
-						owner = entity
-					} else {
-						return errors.New("unable to resolve entity")
-					}
-				}
 			}
 			length := len(jsonData)
 			k.pageMutex.Lock()
@@ -66,7 +48,7 @@ func tablesInitorders() {
 				if length == it {
 					comma = ""
 				}
-				fmt.Fprintf(&k.Ins, "(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d,%d)%s", entity, owner, jsonData[it].Duration, jsonData[it].IsBuyOrder.toSQL(), jsonData[it].Issued.toSQLDate(), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, runtag, comma)
+				fmt.Fprintf(&k.Ins, "(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d,%d)%s", k.job.Source, k.job.Owner, jsonData[it].Duration, jsonData[it].IsBuyOrder.toSQL(), jsonData[it].Issued.toSQLDate(), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, k.job.RunTag, comma)
 				fmt.Fprintf(&k.InsIds, "%d%s", jsonData[it].OrderID, comma)
 			}
 			if k.dead || !k.job.running {
@@ -74,24 +56,16 @@ func tablesInitorders() {
 			}
 			k.InsReady = true
 			k.pageMutex.Unlock()
-			k.job.LockJob("table_orders.go:90")
+			k.job.LockJob()
 			k.job.InsLength += length + 1
 			k.job.UnlockJob()
 			k.pageMutex.Lock()
 			defer k.pageMutex.Unlock()
 			return nil
 		},
-		purge: func(t *table, k *kjob) string {
-			var entity string
-			var ok bool
-			if entity, ok = k.Entity["region_id"]; !ok {
-				if entity, ok = k.Entity["structure_id"]; !ok {
-					if entity, ok = k.Entity["character_id"]; !ok {
-						return "FALSE"
-					}
-				}
-			}
-			return fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE source = %s AND NOT last_seen = %d", t.database, t.name, entity, k.RunTag)
+		handleEndGood: func(t *table, k *kjob) int64 {
+			query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE source = %s AND NOT last_seen = %d", t.database, t.name, k.Source, k.RunTag)
+			return safeQuery(query)
 
 		},
 		keys: []string{

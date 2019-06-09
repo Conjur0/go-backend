@@ -3,7 +3,6 @@
 //////////////////////////////////////////////////////////////////////////////////
 //  readEtags(): reads json `etagFile`, and unmarshals into `etag`
 //  writeEtags(): Marshals contents of `etag` to json `etagFile` if `etagDirty`
-//  getEtag(cip): returns the Entity Tag for the CIP
 //  getEtagData(cip): returns the stored data for the given CIP
 //  setEtag(cip, tag, value): removes existing eTags for the given CIP, records the new tag and data, and marks the file as dirty
 //  etagWriteTimerInit(): Timer Init (called once from main)
@@ -23,42 +22,61 @@ var getetagids *sql.Stmt
 var setetag *sql.Stmt
 var killetag *sql.Stmt
 
-//MYSQL:
+// initialize eTag table declaration and prepared queries
 func etagInit() {
+	tables["etag"] = &table{
+		database:   "karkinos",
+		name:       "etag",
+		primaryKey: "cip",
+		keys: []string{
+			"etag",
+		},
+		_columnOrder: []string{
+			"cip",
+			"etag",
+			"ids",
+			"len",
+		},
+		duplicates: "ON DUPLICATE KEY UPDATE etag=VALUES(etag)",
+		proto: []string{
+			"cip varchar(250) NOT NULL",
+			"etag varchar(250) NOT NULL",
+			"ids mediumtext NOT NULL",
+			"len int(11) DEFAULT NULL",
+		},
+		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",
+	}
 	var err error
-	query := fmt.Sprintf("SELECT etag FROM `%s`.`%s` WHERE cip = ? LIMIT 1", tables["etag"].database, tables["etag"].name)
-	getetag, err = database.Prepare(query)
+	getetag, err = database.Prepare(fmt.Sprintf("SELECT etag FROM `%s`.`%s` WHERE cip = ? LIMIT 1", tables["etag"].database, tables["etag"].name))
 	if err != nil {
-		log("etag.go:etagInit()", err)
+		log(nil, err)
 		panic(err)
 	}
 
-	query = fmt.Sprintf("SELECT ids,len FROM `%s`.`%s` WHERE cip = ? LIMIT 1", tables["etag"].database, tables["etag"].name)
-	getetagids, err = database.Prepare(query)
+	getetagids, err = database.Prepare(fmt.Sprintf("SELECT ids,len FROM `%s`.`%s` WHERE cip = ? LIMIT 1", tables["etag"].database, tables["etag"].name))
 	if err != nil {
-		log("etag.go:etagInit()", err)
+		log(nil, err)
 		panic(err)
 	}
 
-	query = fmt.Sprintf("INSERT INTO `%s`.`%s` (cip,etag,ids,len) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE etag=VALUES(etag),ids=VALUES(ids),len=VALUES(len)", tables["etag"].database, tables["etag"].name)
-	setetag, err = database.Prepare(query)
+	setetag, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (cip,etag,ids,len) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE etag=VALUES(etag),ids=VALUES(ids),len=VALUES(len)", tables["etag"].database, tables["etag"].name))
 	if err != nil {
-		log("etag.go:etagInit()", err)
+		log(nil, err)
 		panic(err)
 	}
 
-	query = fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE cip=?", tables["etag"].database, tables["etag"].name)
-	killetag, err = database.Prepare(query)
+	killetag, err = database.Prepare(fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE cip=?", tables["etag"].database, tables["etag"].name))
 	if err != nil {
-		log("etag.go:etagInit()", err)
+		log(nil, err)
 		panic(err)
 	}
 }
 
+//  returns the Entity Tag for the given CIP
 func getEtag(cip string) string {
 	rows, err := getetag.Query(cip)
 	if err != nil {
-		log("etag.go:getEtag("+cip+")", err)
+		log(cip, err)
 		return ""
 	}
 	rows.Next()
@@ -67,45 +85,47 @@ func getEtag(cip string) string {
 	var out string
 	rows.Scan(&out)
 	if err != nil {
-		log("etag.go:getEtag("+cip+")", err)
+		log(cip, err)
 		return ""
 	}
 	return out
 }
 
+// returns cached list of ids, and original data length, for the given CIP
 func getEtagIds(cip string) (string, int) {
 	rows, err := getetagids.Query(cip)
 	if err != nil {
-		log("etag.go:getEtagIds("+cip+")", err)
+		log(cip, err)
 		return "", 0
 	}
 	rows.Next()
 	defer rows.Close()
-	err = rows.Err()
 	var out string
 	var length int
-	rows.Scan(&out, &length)
+	err = rows.Scan(&out, &length)
 	if err != nil {
-		log("etag.go:getEtagIds("+cip+")", err)
+		log(cip, err)
 		return "", 0
 	}
 	return out, length
 }
 
-func setEtag(cip string, tag string, ids string, length int) {
+// stores list of ids, and data length, for the given CIP
+func setEtag(cip string, etag string, ids string, length int) {
 	if len(ids) == 0 || length == 0 {
-		log("etag.go:setEtag("+cip+")", "Invalid Data Received!")
+		log(cip, "Invalid Data Received!")
 		return
 	}
-	_, err := setetag.Exec(cip, tag, ids, length)
+	_, err := setetag.Exec(cip, etag, ids, length)
 	if err != nil {
-		log("etag.go:setEtag("+cip+")", err)
+		log(cip, err)
 	}
 }
 
+// removes stored data for the given CIP
 func killEtag(cip string) {
 	_, err := killetag.Exec(cip)
 	if err != nil {
-		log("etag.go:killEtag("+cip+")", err)
+		log(cip, err)
 	}
 }

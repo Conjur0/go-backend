@@ -25,8 +25,6 @@ import (
 	"time"
 )
 
-var minCachePct float64 = 5
-
 var kjobStack = make(map[int]*kjob, 4096)
 var kjobStackMutex = sync.RWMutex{}
 var kjobQueueLen int
@@ -36,38 +34,40 @@ type kjobQueueStruct struct {
 	elements chan kjob
 }
 
+// initialize kjob queue ticker
 func kjobQueueInit() {
 	kjobQueueTick = time.NewTicker(500 * time.Millisecond) //500ms
-	go func() {
-		for t := range kjobQueueTick.C {
-			gokjobQueueTick(t)
-		}
-	}()
-	log("kjob.go:kjobQueueInit()", "Timer Initialized!")
+	go gokjobQueueTick()
+	log(nil, "kjob timer started")
 }
-func gokjobQueueTick(t time.Time) {
-	nowtime := ktime()
-	kjobStackMutex.Lock()
-	for itt := range kjobStack {
-		if kjobStack[itt].running == false && kjobStack[itt].NextRun < nowtime {
-			go kjobStack[itt].start()
+
+func gokjobQueueTick() {
+	for range kjobQueueTick.C {
+		nowtime := ktime()
+		kjobStackMutex.Lock()
+		for itt := range kjobStack {
+			if kjobStack[itt].running == false && kjobStack[itt].NextRun < nowtime {
+				go kjobStack[itt].start()
+			}
 		}
+		kjobStackMutex.Unlock()
 	}
-	kjobStackMutex.Unlock()
 }
 
 type kjob struct {
-	Method    string            `json:"method"`   //Method: 'get', 'put', 'update', 'delete'
-	Spec      string            `json:"spec"`     //Spec: '/v1', '/v2', '/v3', '/v4', '/v5', '/v6'
-	Endpoint  string            `json:"endpoint"` //Endpoint: '/markets/{region_id}/orders/', '/characters/{character_id}/skills/'
-	Entity    map[string]string `json:"entity"`   //Entity: "region_id": "10000002", "character_id": "1120048880"
-	URL       string            `json:"url"`      //URL: concat of Spec and Endpoint, with entity processed
-	CI        string            `json:"ci"`       //CI: concat of endpoint:JSON.Marshall(entity)
+
+	// "read-only" variables (not mutex'd, only written by newKjob())
+	Method    string `json:"method"` //Method: 'get', 'put', 'update', 'delete'
+	Source    string `json:"source"` //Entity: "region_id": "10000002", "character_id": "1120048880"
+	Owner     string `json:"owner"`
+	URL       string `json:"url"` //URL: concat of Spec and Endpoint, with entity processed
+	CI        string `json:"ci"`  //CI: concat of endpoint:JSON.Marshall(entity)
 	spec      specS
-	Token     string  `json:"token"` //evesso access_token
-	RunTag    int64   `json:"runTag"`
-	InsLength int     `json:"insLength"`
-	IDLength  int     `json:"idLength"`
+	Token     string `json:"token"` //evesso access_token
+	RunTag    int64  `json:"runTag"`
+	InsLength int    `json:"insLength"`
+	IDLength  int    `json:"idLength"`
+
 	NextRun   int64   `json:"nextRun"`
 	Expires   int64   `json:"expires"`    //milliseconds since 1970, when cache miss will occur
 	ExpiresIn float64 `json:"expires_in"` //milliseconds until expiration, at completion of first page (or head) pulled
@@ -79,46 +79,62 @@ type kjob struct {
 	BytesDownloaded int `json:"bytesDownloaded"` //total bytes downloaded
 	BytesCached     int `json:"bytesCached"`     //total bytes cached
 
-	PullType         uint16        `json:"pullType"`
-	Pages            uint16        `json:"pages"`          //Pages: 0, 1
-	PagesProcessed   uint16        `json:"pagesProcessed"` //count of completed pages (excluding heads)
-	PagesQueued      uint16        `json:"pagesQueued"`    //cumlative count of pages queued
-	Records          int64         `json:"records"`        //cumlative count of records
-	AffectedRows     int64         `json:"affectedRows"`   //cumlative count of affected records
-	RemovedRows      int64         `json:"removedRows"`    //cumlative count of removed records
-	Runs             int           `json:"runs"`
-	heart            *time.Timer   //heartbeat timer
-	req              *http.Request //http request
-	running          bool
-	_jobMutex        sync.RWMutex
-	jobMutexLockedBy string
-	jobMutexLocked   bool
-	page             map[uint16]*kpage
-	table            *table
+	PullType       uint16 `json:"pullType"`
+	Pages          uint16 `json:"pages"`          //Pages: 0, 1
+	PagesProcessed uint16 `json:"pagesProcessed"` //count of completed pages (excluding heads)
+	PagesQueued    uint16 `json:"pagesQueued"`    //cumlative count of pages queued
+
+	Records      int64 `json:"records"`      //cumlative count of records
+	AffectedRows int64 `json:"affectedRows"` //cumlative count of affected records
+	RemovedRows  int64 `json:"removedRows"`  //cumlative count of removed records
+
+	heart    *time.Timer   //heartbeat timer
+	req      *http.Request //http request
+	running  bool
+	jobMutex sync.RWMutex
+	//	jobMutexLockedBy string
+	//	jobMutexLocked   bool
+	page  map[uint16]*kpage // hashmap of [pagenumber]*kpage for all child elements
+	table *table
 }
 
 func newKjob(method string, specnum string, endpoint string, entity map[string]string, pages uint16, table *table) {
 	tspec := getSpec(method, specnum, endpoint)
 	if tspec.invalid {
-		log("kjob.go:newKjob()", "Invalid job received: SPEC invalid")
+		log(nil, "Invalid job received: SPEC invalid")
 		return
 	}
+	var sentity, owner string
+	var ok bool
+	if sentity, ok = entity["region_id"]; !ok {
+		if sentity, ok = entity["structure_id"]; !ok {
+			if sentity, ok = entity["character_id"]; !ok {
+				log(nil, "Invalid job received: unable to resolve entity")
+				return
+			}
+			owner = sentity
+		} else {
+			owner = "NULL"
+		}
+	} else {
+		owner = "NULL"
+	}
+
 	ciString, _ := json.Marshal(entity)
 	tmp := kjob{
-		Method:    method,
-		Spec:      specnum,
-		Endpoint:  endpoint,
-		Entity:    entity,
-		Token:     "none",
-		Pages:     pages,
-		PullType:  pages,
-		URL:       fmt.Sprintf("%s%s?datasource=tranquility", specnum, endpoint),
-		heart:     time.NewTimer(30 * time.Second),
-		CI:        fmt.Sprintf("%s|%s", endpoint, ciString),
-		spec:      tspec,
-		_jobMutex: sync.RWMutex{},
-		page:      make(map[uint16]*kpage),
-		table:     table}
+		Method:   method,
+		Source:   sentity,
+		Owner:    owner,
+		Token:    "none",
+		Pages:    pages,
+		PullType: pages,
+		URL:      fmt.Sprintf("%s%s?datasource=tranquility", specnum, endpoint),
+		heart:    time.NewTimer(30 * time.Second),
+		CI:       fmt.Sprintf("%s|%s", endpoint, ciString),
+		spec:     tspec,
+		jobMutex: sync.RWMutex{},
+		page:     make(map[uint16]*kpage),
+		table:    table}
 	for se, sed := range entity {
 		tmp.URL = strings.Replace(tmp.URL, "{"+se+"}", sed, -1)
 	}
@@ -133,23 +149,25 @@ func newKjob(method string, specnum string, endpoint string, entity map[string]s
 	kjobQueueLen++
 	kjobStackMutex.Unlock()
 }
-func (k *kjob) LockJob(by string) {
+func (k *kjob) LockJob() {
 	// if k.jobMutexLocked {
 	// foop:
 	// 	time.Sleep(1000 * time.Millisecond)
 	// 	if k.jobMutexLocked {
-	// 		log("kjob.go:LockJob("+k.CI+")", "ERR: Job Mutex has been locked for >100ms by "+k.jobMutexLockedBy)
+	// 		log(k.CI, "ERR: Job Mutex has been locked for >100ms by "+k.jobMutexLockedBy)
 	// 		goto foop
 	// 	}
 	// }
-	k._jobMutex.Lock()
-	k.jobMutexLocked = true
-	k.jobMutexLockedBy = by
+	// pc, fn, line, _ := runtime.Caller(1)
+	// justfn := strings.Split(fn, "/")
+	k.jobMutex.Lock()
+	// k.jobMutexLocked = true
+	// k.jobMutexLockedBy = fmt.Sprintf("%.3f [%s(%s):%d]", float64(ktime())/1000, justfn[len(justfn)-1], runtime.FuncForPC(pc).Name(), line)
 }
 func (k *kjob) UnlockJob() {
-	k.jobMutexLocked = false
-	k.jobMutexLockedBy = ""
-	k._jobMutex.Unlock()
+	// k.jobMutexLocked = false
+	// k.jobMutexLockedBy = ""
+	k.jobMutex.Unlock()
 }
 
 // returns all Finished Cached (304) Pages' InsIds, and clears InsIds
@@ -185,39 +203,26 @@ func (k *kjob) getIns() string {
 }
 func (k *kjob) beat() {
 	k.print("ZOMBIE")
-	k.LockJob("kjob.go:198")
+	k.LockJob()
 	k.stopJob(true)
 	k.UnlockJob()
 	k.start()
 }
 func (k *kjob) print(msg string) {
-	// jsonData, err := json.MarshalIndent(&k, "", "    ")
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s cache:%.0f security:%s token:%s nextRun:%d, expires:%d, expires_in:%.0f APICalls:%d, APICache:%d, APIErrors:%d bytesDownloaded:%d, bytesCached: %d PullType:%d, Pages:%d, pagesProcessed:%d, pagesQueued:%d, runs:%d, kjobQueue Len:%d Processed:%d Finished:%d Runtime:%dms",
-	// 	k.Method, k.CI,
-	// 	k.Cache, k.Security, k.Token,
-	// 	k.NextRun, k.Expires, k.ExpiresIn,
-	// 	k.APICalls, k.APICache, k.APIErrors,
-	// 	k.BytesDownloaded, k.BytesCached,
-	// 	k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs,
-	// 	kjobQueueLen, kjobQueueProcessed, kjobQueueFinished, getMetric(k.CI)))
-	log("kjob.go:k.print("+msg+")", fmt.Sprintf("%s %s %d %s %s %d %d %.0f %d %d %d %d %d %d %d %d %d %d %d %d",
+	log(msg, fmt.Sprintf("%s %s %d %s %s %d %d %.0f %d %d %d %d %d %d %d %d %d %d %d",
 		k.Method, k.CI,
 		k.spec.cache, k.spec.security, k.Token,
 		k.NextRun, k.Expires, k.ExpiresIn,
 		k.APICalls, k.APICache, k.APIErrors,
 		k.BytesDownloaded, k.BytesCached,
-		k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued, k.Runs,
+		k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued,
 		kjobQueueLen, getMetric(k.CI)))
 }
 func (k *kjob) start() {
-	k.LockJob("kjob.go:226")
+	k.LockJob()
 	k.heart.Reset(30 * time.Second)
 	k.RunTag = ktime()
 	k.running = true
-	k.Runs++
 	addMetric(k.CI)
 	k.UnlockJob()
 	k.run()
@@ -225,7 +230,7 @@ func (k *kjob) start() {
 func (k *kjob) stopJob(zombie bool) {
 	//todo: final sql write, store metrics
 	//k.mutex.Lock() **Should be locked in a wrapper around the call to this.
-	log("kjob.go:k.stopJob("+k.CI+")", fmt.Sprintf("%t Pages:%d/%d Cached:%db DL:%db Records:%d Affected:%d Removed:%d ETRO: %dms", zombie, k.PagesProcessed, k.Pages, k.BytesCached, k.BytesDownloaded,
+	log(k.CI, fmt.Sprintf("%t Pages:%d/%d Cached:%db DL:%db Records:%d Affected:%d Removed:%d ETRO: %dms", zombie, k.PagesProcessed, k.Pages, k.BytesCached, k.BytesDownloaded,
 		k.Records, k.AffectedRows, k.RemovedRows, k.Expires-ktime()))
 	k.heart.Stop()
 	for it := range k.page {
@@ -250,20 +255,16 @@ func (k *kjob) stopJob(zombie bool) {
 func (k *kjob) run() {
 	//k.heart.Reset(30 * time.Second)
 	if k.spec.security != "" && len(k.Token) < 5 {
-		log("kjob.go:k.run() "+k.CI, "todo: get token.")
+		log(k.CI, "todo: get token.")
 		return
 	}
 	if k.Pages == 0 {
 		go k.requestHead()
 		return
 	}
-	if k.Pages != k.PagesQueued {
-		k.queuePages()
-	}
-	return
 }
 func (k *kjob) queuePages() {
-	k.LockJob("kjob.go:277")
+	k.LockJob()
 	//log("kjob.go:k.queuePages()", fmt.Sprintf("%s Queueing pages %d to %d", k.CI, k.PagesQueued+1, k.Pages))
 	for i := k.PagesQueued + 1; i <= k.Pages; i++ {
 		k.newPage(i)
@@ -280,23 +281,18 @@ func (k *kjob) requestHead() {
 		go k.requestHead()
 		return
 	}
-	etaghdr := getEtag(k.CI)
-
 	req, err := http.NewRequest("HEAD", c.EsiURL+k.URL, nil)
 	if err != nil {
-		log("kjob.go:k.requestHead("+k.CI+") http.NewRequest", err)
+		log(k.CI, err)
 		return
 	}
 	k.req = req
-	if len(etaghdr) > 0 {
-		k.req.Header.Add("If-None-Match", etaghdr)
-	}
 	if k.spec.security != "" && len(k.Token) > 5 {
 		k.req.Header.Add("Authorization", "Bearer "+k.Token)
 	}
 	resp, err := client.Do(k.req)
 	if err != nil {
-		log("kjob.go:k.requestHead("+k.CI+") client.Do", err)
+		log(k.CI, err)
 		return
 	}
 	/*
@@ -317,17 +313,6 @@ func (k *kjob) requestHead() {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 200 {
-		if _, ok := resp.Header["Etag"]; ok {
-			go setEtag(k.CI, resp.Header["Etag"][0], "1", 1)
-		}
-		//log("kjob.go:k.requestHead("+k.CI+") )", fmt.Sprintf("RCVD (200) %s in %dms", k.URL, getMetric("HEAD:"+k.CI)))
-		//k.print("")
-	} else if resp.StatusCode == 304 {
-		//log("kjob.go:k.requestHead("+k.CI+") )", fmt.Sprintf("RCVD (304) %s in %dms", k.URL, getMetric("HEAD:"+k.CI)))
-		//k.print("")
-	}
-
-	if resp.StatusCode == 200 || resp.StatusCode == 304 {
 		k.updateExp(resp.Header["Expires"][0])
 
 		var timepct float64
@@ -336,26 +321,17 @@ func (k *kjob) requestHead() {
 		} else {
 			timepct = 0
 		}
-		if timepct < minCachePct {
-			log("kjob.go:k.requestHead("+k.CI+") )", k.CI+" expires too soon, recycling!")
-			k.LockJob("kjob.go:352")
+		if timepct < c.MinCachePct {
+			log(k.CI, " expires too soon, recycling!")
+			k.LockJob()
 			k.stopJob(false)
 			k.UnlockJob()
 			return
 		}
 		if pgs, ok := resp.Header["X-Pages"]; ok {
-			pgss, err := strconv.Atoi(pgs[0])
-			if err == nil {
-				k.Pages = uint16(pgss)
-			} else {
-				k.Pages = 1
-			}
-
+			k.updatePageCount(pgs[0])
 		}
-		//log("kjob.go:k.requestHead("+k.CI+") )", fmt.Sprintf("RCVD (%d) HEAD(%d) %s in %dms", resp.StatusCode, k.Pages, k.URL, getMetric("HEAD:"+k.CI)))
-		go k.run()
 	}
-
 }
 
 //"2006-01-02T15:04:05Z"
@@ -363,15 +339,26 @@ func (k *kjob) requestHead() {
 func (k *kjob) updateExp(expire string) {
 	exp, err := time.Parse("Mon, 02 Jan 2006 15:04:05 MST", expire)
 	if err == nil {
-		k.LockJob("kjob.go:377")
+		k.LockJob()
 		k.Expires = int64(exp.UnixNano() / int64(time.Millisecond))
 		k.ExpiresIn = float64(k.Expires - ktime())
 		k.NextRun = k.Expires + 750
 		k.UnlockJob()
 	}
 }
+func (k *kjob) updatePageCount(pages string) {
+	pgss, _ := strconv.Atoi(pages)
+	if k.Pages != uint16(pgss) {
+		k.LockJob()
+		k.Pages = uint16(pgss)
+		k.UnlockJob()
+		if k.Pages != k.PagesQueued {
+			k.queuePages()
+		}
+	}
+}
 func (k *kjob) processPage() {
-	k.LockJob("kjob.go:386")
+	k.LockJob()
 	defer k.UnlockJob()
 	k.PagesProcessed++
 	pagesFinished++
@@ -383,7 +370,7 @@ func (k *kjob) processPage() {
 
 		cachedInsIds := k.getCachedInsIds()
 		if len(cachedInsIds) == 0 {
-			log("kjob.go:processPage()", "Memory read error")
+			log(nil, "Memory read error")
 			k.stopJob(false)
 			return
 		}
@@ -398,7 +385,7 @@ func (k *kjob) processPage() {
 	if (k.InsLength >= 15000) || ((k.InsLength > 0) && k.PagesProcessed == k.Pages) {
 		getIds := k.getIns()
 		if len(getIds) == 0 {
-			log("kjob.go:processPage()", "Memory read error")
+			log(nil, "Memory read error")
 			k.stopJob(false)
 			return
 		}
@@ -410,10 +397,7 @@ func (k *kjob) processPage() {
 	}
 
 	if k.PagesProcessed == k.Pages {
-		if k.table.prune {
-			query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s", k.table.database, k.table.name, k.table.purge(k.table, k))
-			k.RemovedRows += safeQuery(query)
-		}
+		k.RemovedRows += k.table.handleEndGood(k.table, k)
 		k.stopJob(false)
 	}
 }

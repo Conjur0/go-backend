@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+var tables = make(map[string]*table)
+
 type eveDate string
 
 func (s eveDate) toSQLDate() string {
@@ -55,26 +57,34 @@ type table struct {
 	name         string   //Table Name
 	primaryKey   string   //Primary BTREE Index (multiple fields separated with :)
 	keys         []string //Other Indexes (multiple fields separated with :)
-	prune        bool
-	transform    func(t *table, k *kpage) error
-	purge        func(t *table, k *kjob) string
 	_columnOrder []string
 	duplicates   string
 	proto        []string
 	strategy     func(t *table, k *kjob) (error, string)
 	tail         string
+
+	handleStart       func(t *table, k *kjob) error  //Called when job started, and Pages has been populated
+	handlePageData    func(t *table, k *kpage) error //Called to process NEW (200) page data
+	handlePageCached  func(t *table, k *kpage) error //Called to process OLD (304) page data
+	handleWriteData   func(t *table, k *kjob) error  //Called when len(Ins) > sql_ins_threshold, to INSERT data
+	handleWriteCached func(t *table, k *kjob) error  //Called when len(InsIds) > sql_ins_threshold, to UPDATE data
+	handleEndGood     func(t *table, k *kjob) int64  //Called when job completes successfully, returns number of DELETED records
+	handleEndFail     func(t *table, k *kjob)        //Called when job fails
 }
 
+// return concatenated _columnOrder
 func (t *table) columnOrder() string {
 	var b strings.Builder
 	comma := ""
 	for it := range t._columnOrder {
-		fmt.Fprintf(&b, "%s%s", comma, t._columnOrder[it])
+		b.WriteString(comma)
+		b.WriteString(t._columnOrder[it])
 		comma = ","
 	}
 	return b.String()
 }
 
+// return CREATE TABLE IF NOT EXISTS
 func (t *table) create() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "CREATE TABLE IF NOT EXISTS `%s`.`%s` (\n", t.database, t.name)
@@ -113,17 +123,14 @@ func (t *table) create() string {
 	return b.String()
 }
 
-var tables = make(map[string]*table)
-
+// call table_*.go init functions, create tables if needed
 func tablesInit() {
 	tablesInitorders()
-	tablesInitetag()
-	tablesInitspec()
 	tablesInitcontracts()
 	for it := range tables {
 		safeQuery(tables[it].create())
-		log("tables.go:initTables()", fmt.Sprintf("Initialized table %s", it))
+		log(nil, fmt.Sprintf("Initialized table %s", it))
 	}
 
-	log("tables.go:initTables()", "Initialization Complete!")
+	log(nil, "Initialization Complete!")
 }
