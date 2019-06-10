@@ -177,7 +177,6 @@ func (k *kjob) newPage(page uint16, requeue bool) {
 	if requeue {
 		k.jobMutex.Lock()
 		defer k.jobMutex.Unlock()
-		k.APIErrors++
 	}
 	k.page[page] = &kpage{
 		job:  k,
@@ -191,6 +190,9 @@ func (k *kpage) destroy() {
 		curInFlight--
 		k.running = 0
 	}
+	k.ins.Reset()
+	k.ids.Reset()
+	k.upd.Reset()
 	k.dead = true
 }
 func (k *kpage) requestPage() {
@@ -199,11 +201,7 @@ func (k *kpage) requestPage() {
 	if k.dead {
 		return
 	}
-	k.job.jobMutex.Lock()
-	k.job.APICalls++
-	k.job.jobMutex.Unlock()
 
-	addMetric(k.cip)
 	if backoff {
 		log(k.cip, "backoff trigger")
 		k.job.stopJob(true)
@@ -328,7 +326,6 @@ func (k *kpage) requestPage() {
 		k.job.jobMutex.Lock()
 		bCached += length
 		k.job.BytesCached += length
-		k.job.APICache++
 		k.job.jobMutex.Unlock()
 	}
 
@@ -349,7 +346,7 @@ func (k *kpage) requestPage() {
 
 		k.job.processPage()
 	} else {
-		log(k.cip, fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db in %dms", resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body), getMetric(k.cip)))
+		log(k.cip, fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db", resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body)))
 		k.job.newPage(k.page, true)
 	}
 }

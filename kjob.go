@@ -16,10 +16,10 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +29,7 @@ var kjobStack = make(map[int]*kjob, 4096)
 var kjobStackMutex debugOnlyMutex
 var kjobQueueLen int
 var kjobQueueTick *time.Ticker
+var joblog *sql.Stmt
 
 type kjobQueueStruct struct {
 	elements chan kjob
@@ -39,13 +40,12 @@ func kjobInit() {
 	kjobQueueTick = time.NewTicker(500 * time.Millisecond) //500ms
 	go gokjobQueueTick()
 
-	//newKjob("get", "/v1", "/contracts/public/{region_id}/", fmt.Sprintf("{\"region_id\": \"%d\"}", eveRegions[i]), 0, "contracts")
 	tables["jobs"] = &table{
 		database:   "karkinos",
 		name:       "jobs",
 		primaryKey: "id",
 		uniqueKeys: map[string]string{
-			"msee": "method:spec:entity:endpoint",
+			"msee": "method:spec:endpoint:entity",
 		},
 		_columnOrder: []string{
 			"method",
@@ -69,7 +69,48 @@ func kjobInit() {
 		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",
 	}
 
+	tables["job_log"] = &table{
+		database:   "karkinos",
+		name:       "job_log",
+		primaryKey: "id",
+		keys: map[string]string{
+			"job_id": "job_id",
+		},
+		_columnOrder: []string{
+			"`time`",
+			"job_id",
+			"`pages`",
+			"records",
+			"affected",
+			"removed",
+			"runtime",
+			"download",
+			"cache",
+		},
+		proto: []string{
+			"id BIGINT NOT NULL AUTO_INCREMENT",
+			"`time` BIGINT NOT NULL",
+			"`job_id` INT NOT NULL",
+			"`pages` SMALLINT NOT NULL",
+			"`records` INT NOT NULL",
+			"`affected` INT NOT NULL",
+			"`removed` INT NOT NULL",
+			"`runtime` INT NOT NULL",
+			"`download` INT NOT NULL",
+			"`cache` INT NOT NULL",
+		},
+		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",
+	}
+
 	log(nil, "kjob timer started")
+}
+func kjobQueryInit() {
+	var err error
+	joblog, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (?,?,?,?,?,?,?,?,?)", tables["job_log"].database, tables["job_log"].name, tables["job_log"].columnOrder()))
+	if err != nil {
+		log(nil, err)
+		panic(err)
+	}
 }
 
 func gokjobQueueTick() {
@@ -88,6 +129,7 @@ func gokjobQueueTick() {
 type kjob struct {
 
 	// "read-only" variables (not mutex'd, only written by newKjob())
+	id     int
 	Method string `json:"method"` //Method: 'get', 'put', 'update', 'delete'
 	Source string `json:"source"` //Entity: "region_id": "10000002", "character_id": "1120048880"
 	Owner  string `json:"owner"`
@@ -100,10 +142,6 @@ type kjob struct {
 	NextRun   int64 `json:"nextRun"`
 	Expires   int64 `json:"expires"`    //milliseconds since 1970, when cache miss will occur
 	ExpiresIn int64 `json:"expires_in"` //milliseconds until expiration, at completion of first page (or head) pulled
-
-	APICalls  uint16 `json:"apiCalls"`  //count of API Calls (including head, errors, etc)
-	APICache  uint16 `json:"apiCache"`  //count of 304 responses received
-	APIErrors uint16 `json:"apiErrors"` //count of >304 statuses received
 
 	ins             strings.Builder // builder of records pending insert
 	RecordsIns      int64           `json:"records_ins"`     // count of records pending insert
@@ -126,14 +164,12 @@ type kjob struct {
 	req      *http.Request //http request
 	running  bool
 	jobMutex debugOnlyMutex
-	//	jobMutexLockedBy string
-	//	jobMutexLocked   bool
-	page    map[uint16]*kpage // hashmap of [pagenumber]*kpage for all child elements
-	table   *table
-	sqldata map[uint64]uint64
+	page     map[uint16]*kpage // hashmap of [pagenumber]*kpage for all child elements
+	table    *table
+	sqldata  map[uint64]uint64
 }
 
-func newKjob(method string, specnum string, endpoint string, ciString string, pages uint16, table string) {
+func newKjob(id int, method string, specnum string, endpoint string, ciString string, pages uint16, table string) {
 	tspec := getSpec(method, specnum, endpoint)
 	if tspec.invalid {
 		log(nil, "Invalid job received: SPEC invalid")
@@ -159,6 +195,7 @@ func newKjob(method string, specnum string, endpoint string, ciString string, pa
 	}
 
 	tmp := kjob{
+		id:       id,
 		Method:   method,
 		Source:   sentity,
 		Owner:    owner,
@@ -186,54 +223,11 @@ func newKjob(method string, specnum string, endpoint string, ciString string, pa
 	kjobStackMutex.Unlock()
 }
 
-// returns all Finished Cached (304) Pages' InsIds, and clears InsIds
-// func (k *kjob) getCachedInsIds() string {
-// 	var b strings.Builder
-// 	comma := ""
-// 	for it := range k.page {
-// 		k.page[it].pageMutex.Lock()
-// 		if k.page[it].InsReady && (k.page[it].Ins.Len() == 0) && (k.page[it].InsIds.Len() > 0) {
-// 			fmt.Fprintf(&b, "%s%s", comma, k.page[it].InsIds.String())
-// 			k.page[it].InsIds.Reset()
-// 			comma = ","
-// 		}
-// 		k.page[it].pageMutex.Unlock()
-// 	}
-// 	return b.String()
-// }
-
-// returns all Finished (200) Pages' Ins, and clears Ins
-// func (k *kjob) getIns() string {
-// 	var b strings.Builder
-// 	comma := ""
-// 	for it := range k.page {
-// 		k.page[it].pageMutex.Lock()
-// 		if k.page[it].InsReady && (k.page[it].Ins.Len() > 0) {
-// 			fmt.Fprintf(&b, "%s%s", comma, k.page[it].Ins.String())
-// 			k.page[it].Ins.Reset()
-// 			comma = ","
-// 		}
-// 		k.page[it].pageMutex.Unlock()
-// 	}
-// 	return b.String()
-// }
-
 func (k *kjob) beat() {
-	k.print("ZOMBIE")
-	k.forceNextRun(1000)
+	k.forceNextRun(30000)
 	k.stopJob(true)
-	k.start()
 }
-func (k *kjob) print(msg string) {
-	log(msg, fmt.Sprintf("%s %s %d %s %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
-		k.Method, k.CI,
-		k.spec.cache, k.spec.security, k.Token,
-		k.NextRun, k.Expires, k.ExpiresIn,
-		k.APICalls, k.APICache, k.APIErrors,
-		k.BytesDownloaded, k.BytesCached,
-		k.PullType, k.Pages, k.PagesProcessed, k.PagesQueued,
-		kjobQueueLen, getMetric(k.CI)))
-}
+
 func (k *kjob) start() {
 	k.jobMutex.Lock()
 	k.heart.Reset(30 * time.Second)
@@ -254,12 +248,12 @@ func (k *kjob) stopJob(failed bool) {
 	k.jobMutex.Lock()
 	if failed {
 		k.table.handleEndFail(k)
-		k.APIErrors++
 	} else {
 		k.RemovedRows += k.table.handleEndGood(k)
+		log(k.CI, fmt.Sprintf("Pages:%d/%d Records:%d Affected:%d Removed:%d nextRun:%dms runtime:%dms", k.PagesProcessed, k.Pages, k.Records, k.AffectedRows, k.RemovedRows, k.Expires-ktime(), getMetric(k.CI)))
+		joblog.Exec(ktime(), k.id, k.PagesProcessed, k.Records, k.AffectedRows, k.RemovedRows, getMetric(k.CI), k.BytesDownloaded, k.BytesCached)
+
 	}
-	log(k.CI, fmt.Sprintf("%t Pages:%d/%d Cached:%db DL:%db Records:%d Affected:%d Removed:%d ETRO: %dms", failed, k.PagesProcessed, k.Pages, k.BytesCached, k.BytesDownloaded,
-		k.Records, k.AffectedRows, k.RemovedRows, k.Expires-ktime()))
 	k.heart.Stop()
 	for it := range k.page {
 		k.page[it].destroy()
@@ -267,19 +261,16 @@ func (k *kjob) stopJob(failed bool) {
 	k.running = false
 	k.Token = "none"
 	k.Expires = 0
-	k.APICalls = 0
-	k.APICache = 0
-	k.APIErrors = 0
-	k.BytesDownloaded = 0
-	k.BytesCached = 0
 	k.Pages = k.PullType
 	k.PagesProcessed = 0
 	k.PagesQueued = 0
 	k.Records = 0
 	k.AffectedRows = 0
 	k.RemovedRows = 0
+	k.ins.Reset()
+	k.upd.Reset()
 	k.jobMutex.Unlock()
-	defer runtime.GC()
+	//defer runtime.GC()
 }
 func (k *kjob) run() {
 	//k.heart.Reset(30 * time.Second)
@@ -303,10 +294,6 @@ func (k *kjob) queuePages() {
 }
 func (k *kjob) requestHead() {
 	var err error
-	//log("kjob.go:k.requestHead("+k.CI+")", "requesting head "+k.CI)
-	addMetric("HEAD:" + k.CI)
-	//k.heart.Reset(30 * time.Second)
-	k.APICalls++
 	if backoff {
 		time.Sleep(5 * time.Second)
 		go k.requestHead()
@@ -407,17 +394,6 @@ func (k *kjob) processPage() {
 		k.AffectedRows += k.table.handleWriteUpd(k)
 		k.RecordsUpd = 0
 		k.upd.Reset()
-		/*
-			cachedInsIds := k.getCachedInsIds()
-			if len(cachedInsIds) == 0 {
-				log(nil, "Memory read error")
-				k.stopJob(false)
-				return
-			}
-			query := fmt.Sprintf("UPDATE `%s`.`%s` SET last_seen=%d WHERE %s IN (%s)", k.table.database, k.table.name, k.RunTag, k.table.primaryKey, cachedInsIds)
-			k.Records += safeQuery(query)
-			k.IDLength = 0
-		*/
 	}
 
 	//insert records if:
@@ -427,21 +403,8 @@ func (k *kjob) processPage() {
 		k.AffectedRows += k.table.handleWriteIns(k)
 		k.RecordsIns = 0
 		k.ins.Reset()
-		/*
-			getIds := k.getIns()
-			if len(getIds) == 0 {
-				log(nil, "Memory read error")
-				k.stopJob(false)
-				return
-			}
-			query := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), getIds, k.table.duplicates)
-			tmp := safeQuery(query)
-			k.Records += tmp
-			k.AffectedRows += tmp
-			k.InsLength = 0
-		*/
-
 	}
+
 	k.jobMutex.Unlock()
 	if k.PagesProcessed == k.Pages {
 		k.stopJob(false)
