@@ -23,6 +23,14 @@ func (s eveDate) toSQLDate() string {
 	return strconv.Itoa(int(parse.UnixNano() / int64(time.Millisecond)))
 }
 
+func (s eveDate) toktime() uint64 {
+	parse, err := time.Parse("2006-01-02T15:04:05Z", string(s))
+	if err != nil {
+		return 0
+	}
+	return uint64(parse.UnixNano() / int64(time.Millisecond))
+}
+
 type boool bool
 
 func (b boool) toSQL() int {
@@ -53,23 +61,25 @@ func (s sQLenum) ifnull() string {
 }
 
 type table struct {
-	database     string   //Database Name
-	name         string   //Table Name
-	primaryKey   string   //Primary BTREE Index (multiple fields separated with :)
-	keys         []string //Other Indexes (multiple fields separated with :)
+	database     string //Database Name
+	name         string //Table Name
+	primaryKey   string //(uint64)Primary BTREE Index (multiple fields separated with :)
+	changedKey   string //what to poll to see if the record needs to be updated (uint64)
+	jobKey       string
+	keys         map[string]string //Other Indexes (multiple fields separated with :)
+	uniqueKeys   map[string]string
 	_columnOrder []string
 	duplicates   string
 	proto        []string
-	strategy     func(t *table, k *kjob) (error, string)
 	tail         string
 
-	handleStart       func(t *table, k *kjob) error  //Called when job started, and Pages has been populated
-	handlePageData    func(t *table, k *kpage) error //Called to process NEW (200) page data
-	handlePageCached  func(t *table, k *kpage) error //Called to process OLD (304) page data
-	handleWriteData   func(t *table, k *kjob) error  //Called when len(Ins) > sql_ins_threshold, to INSERT data
-	handleWriteCached func(t *table, k *kjob) error  //Called when len(InsIds) > sql_ins_threshold, to UPDATE data
-	handleEndGood     func(t *table, k *kjob) int64  //Called when job completes successfully, returns number of DELETED records
-	handleEndFail     func(t *table, k *kjob)        //Called when job fails
+	handleStart      func(k *kjob) error  //Called when job started
+	handlePageData   func(k *kpage) error //Called to process NEW (200) page data
+	handlePageCached func(k *kpage) error //Called to process OLD (304) page data
+	handleWriteIns   func(k *kjob) int64  //Called when len(Ins) > sql_ins_threshold, to INSERT data, returns number of INSERTed records
+	handleWriteUpd   func(k *kjob) int64  //Called when len(InsIds) > sql_ins_threshold, to UPDATE data, returns number of UPDATEd records
+	handleEndGood    func(k *kjob) int64  //Called when job completes successfully, returns number of DELETEd records
+	handleEndFail    func(k *kjob)        //Called when job fails
 }
 
 // return concatenated _columnOrder
@@ -87,39 +97,52 @@ func (t *table) columnOrder() string {
 // return CREATE TABLE IF NOT EXISTS
 func (t *table) create() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "CREATE TABLE IF NOT EXISTS `%s`.`%s` (\n", t.database, t.name)
+	comma := ""
 
+	//create part...
+	fmt.Fprintf(&b, "CREATE TABLE IF NOT EXISTS `%s`.`%s` (", t.database, t.name)
 	//fields
 	for it := range t.proto {
-		fmt.Fprintf(&b, "    %s,\n", t.proto[it])
+		fmt.Fprintf(&b, "%s\n    %s", comma, t.proto[it])
+		comma = ","
 	}
 
 	//primary key
 	prim := strings.Split(t.primaryKey, ":")
-	comma := ""
 	if len(prim) > 0 {
-		b.WriteString("    PRIMARY KEY (")
+		comma := ""
+		b.WriteString(",\n    PRIMARY KEY (")
 		for it := range prim {
 			fmt.Fprintf(&b, "%s`%s`", comma, prim[it])
 			comma = ","
 		}
+		b.WriteString(")")
 	}
-	comma = ","
-	if len(t.keys) == 0 {
-		comma = ""
-	}
-	fmt.Fprintf(&b, ")%s\n", comma)
 
 	//keys
-	length := len(t.keys) - 1
 	for it := range t.keys {
-		if it == length {
-			comma = ""
+		k := strings.Split(t.keys[it], ":")
+		comma := ""
+		fmt.Fprintf(&b, ",\n    KEY `%s`(", it)
+		for itt := range k {
+			fmt.Fprintf(&b, "%s`%s`", comma, k[itt])
+			comma = ","
 		}
-		fmt.Fprintf(&b, "    KEY `%s` (`%s`)%s\n", t.keys[it], t.keys[it], comma)
-
+		b.WriteString(")")
 	}
-	fmt.Fprintf(&b, ")%s\n", t.tail)
+
+	//unique keys
+	for it := range t.uniqueKeys {
+		k := strings.Split(t.uniqueKeys[it], ":")
+		comma := ""
+		fmt.Fprintf(&b, ",\n    UNIQUE KEY `%s`(", it)
+		for itt := range k {
+			fmt.Fprintf(&b, "%s`%s`", comma, k[itt])
+			comma = ","
+		}
+		b.WriteString(")")
+	}
+	fmt.Fprintf(&b, "\n)%s\n", t.tail)
 	return b.String()
 }
 
@@ -128,9 +151,8 @@ func tablesInit() {
 	tablesInitorders()
 	tablesInitcontracts()
 	for it := range tables {
-		safeQuery(tables[it].create())
+		safeExec(tables[it].create())
 		log(nil, fmt.Sprintf("Initialized table %s", it))
 	}
-
-	log(nil, "Initialization Complete!")
+	//log(nil, "Initialization Complete!")
 }

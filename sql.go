@@ -27,7 +27,7 @@ func sqlInit() {
 }
 
 // attempts the query 10 times, and panics if it fails
-func safeQuery(query string) int64 {
+func safeExec(query string) int64 {
 	var tries int
 Again:
 	statement, err := database.Prepare(query)
@@ -71,6 +71,49 @@ Again:
 				aff = 0
 			}
 			return aff
+		}
+	}
+}
+
+func safeQuery(query string) *sql.Rows {
+	var tries int
+Again:
+	statement, err := database.Prepare(query)
+	defer statement.Close()
+	if err != nil {
+		var logquery string
+		if len(query) > 505 {
+			logquery = query[:250] + " ... " + query[len(query)-250:]
+		} else {
+			logquery = query
+		}
+		log(nil, err)
+		log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
+		tries++
+		if tries < 11 {
+			time.Sleep(1 * time.Second)
+			goto Again
+		}
+		panic(query)
+	} else {
+		res, err := statement.Query()
+		if err != nil {
+			var logquery string
+			if len(query) > 505 {
+				logquery = query[:250] + " ... " + query[len(query)-250:]
+			} else {
+				logquery = query
+			}
+			log(nil, err)
+			log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
+			tries++
+			if tries < 11 {
+				time.Sleep(1 * time.Second)
+				goto Again
+			}
+			panic(query)
+		} else {
+			return res
 		}
 	}
 }

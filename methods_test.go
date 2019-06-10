@@ -5,8 +5,9 @@ import (
 	"time"
 )
 
+//useless test.... but a test.
 func TestDebugOnlyMutex(t *testing.T) {
-	t.Run("Create Lock", func(t *testing.T) {
+	t.Run("Lock", func(t *testing.T) {
 		var test debugOnlyMutex
 		if test.lock != 0 {
 			t.Errorf("debugOnlyMutex.lock: got %d want 0", test.lock)
@@ -25,9 +26,10 @@ func TestDebugOnlyMutex(t *testing.T) {
 		if test.lockByLine == 0 {
 			t.Errorf("debugOnlyMutex.lockByLine: got %d want line number", test.lockByLine)
 		}
-		if test.lockByTime <= preruntime {
-			t.Errorf("debugOnlyMutex.lockByTime: got %d want appropriate time", test.lockByTime)
+		if test.lockByTime < preruntime {
+			t.Errorf("debugOnlyMutex.lockByTime: got %d want >= %d", test.lockByTime, preruntime)
 		}
+
 	})
 
 }

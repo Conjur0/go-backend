@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
-type orders []ordersElement
+type orders []order
 
-type ordersElement struct {
+type order struct {
 	Duration     uint32  `json:"duration"`
 	IsBuyOrder   boool   `json:"is_buy_order"`
 	Issued       eveDate `json:"issued"`
@@ -21,7 +23,6 @@ type ordersElement struct {
 	OrderID      uint64  `json:"order_id"`
 	Price        float64 `json:"price"`
 	Range        string  `json:"range"`
-	SystemID     uint32  `json:"system_id"`
 	TypeID       uint32  `json:"type_id"`
 	VolumeRemain uint32  `json:"volume_remain"`
 	VolumeTotal  uint32  `json:"volume_total"`
@@ -32,49 +33,14 @@ func tablesInitorders() {
 		database:   "karkinos",
 		name:       "orders",
 		primaryKey: "order_id",
-		handlePageData: func(t *table, k *kpage) error {
-			var jsonData orders
-			if err := json.Unmarshal(k.body, &jsonData); err != nil {
-				return err
-			}
-			length := len(jsonData)
-			k.pageMutex.Lock()
-			k.Ins.Grow(length * 104)
-			k.InsIds.Grow(length * 11)
-			comma := ","
-			length--
-			for it := range jsonData {
-				//fmt.Printf("Record %d of %d: order_id:%d\n", it, length, jsonData[it].OrderID)
-				if length == it {
-					comma = ""
-				}
-				fmt.Fprintf(&k.Ins, "(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d,%d)%s", k.job.Source, k.job.Owner, jsonData[it].Duration, jsonData[it].IsBuyOrder.toSQL(), jsonData[it].Issued.toSQLDate(), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, k.job.RunTag, comma)
-				fmt.Fprintf(&k.InsIds, "%d%s", jsonData[it].OrderID, comma)
-			}
-			if k.dead || !k.job.running {
-				return errors.New("transform finished a dead job")
-			}
-			k.InsReady = true
-			k.pageMutex.Unlock()
-			k.job.LockJob()
-			k.job.InsLength += length + 1
-			k.job.UnlockJob()
-			k.pageMutex.Lock()
-			defer k.pageMutex.Unlock()
-			return nil
-		},
-		handleEndGood: func(t *table, k *kjob) int64 {
-			query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE source = %s AND NOT last_seen = %d", t.database, t.name, k.Source, k.RunTag)
-			return safeQuery(query)
-
-		},
-		keys: []string{
-			"location_id",
-			"type_id",
-			"is_buy_order",
-			"source",
-			"owner",
-			"last_seen",
+		changedKey: "issued",
+		jobKey:     "source",
+		keys: map[string]string{
+			"location_id":  "location_id",
+			"type_id":      "type_id",
+			"is_buy_order": "is_buy_order",
+			"source":       "source",
+			"owner":        "owner",
 		},
 		_columnOrder: []string{
 			"source",
@@ -90,9 +56,8 @@ func tablesInitorders() {
 			"type_id",
 			"volume_remain",
 			"volume_total",
-			"last_seen",
 		},
-		duplicates: "ON DUPLICATE KEY UPDATE source=IF(ISNULL(VALUES(owner)),VALUES(source),source),owner=VALUES(owner),issued=VALUES(issued),price=VALUES(price),volume_remain=VALUES(volume_remain)",
+		duplicates: "ON DUPLICATE KEY UPDATE source=IF(ISNULL(VALUES(owner)),VALUES(source),source),owner=IF(ISNULL(VALUES(owner)),owner,VALUES(owner)),issued=VALUES(issued),price=VALUES(price),volume_remain=VALUES(volume_remain)",
 		proto: []string{
 			"source bigint(20) NOT NULL",
 			"owner bigint(20) NULL",
@@ -107,9 +72,164 @@ func tablesInitorders() {
 			"type_id int(11) NOT NULL",
 			"volume_remain bigint(20) NOT NULL",
 			"volume_total bigint(20) NOT NULL",
-			"last_seen bigint(20) NOT NULL",
 		},
 		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",
+		handleStart: func(k *kjob) error { //jobMutex is already locked for us.
+			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleStart called", k.table.name))
+			res := safeQuery(fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` WHERE %s=%s", k.table.database, k.table.name, k.table.jobKey, k.Source))
+			defer res.Close()
+			if !res.Next() {
+				k.sqldata = make(map[uint64]uint64)
+				return nil
+			}
+			var numRecords int
+			res.Scan(&numRecords)
+			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleStart got %d records", k.table.name, numRecords))
+			k.sqldata = make(map[uint64]uint64, numRecords)
+
+			ress := safeQuery(fmt.Sprintf("SELECT %s,%s FROM `%s`.`%s` WHERE %s=%s", k.table.primaryKey, k.table.changedKey, k.table.database, k.table.name, k.table.jobKey, k.Source))
+			defer ress.Close()
+			var key, data uint64
+			for ress.Next() {
+				ress.Scan(&key, &data)
+				k.sqldata[key] = data
+			}
+			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleStart have %d records", k.table.name, len(k.sqldata)))
+			return nil
+		},
+		handlePageData: func(k *kpage) error {
+			k.pageMutex.Lock()
+			k.job.jobMutex.Lock()
+			var order orders
+			if err := json.Unmarshal(k.body, &order); err != nil {
+				return err
+			}
+			// log(k.cip, fmt.Sprintf("tables[\"%s\"].handlePageData called with %d records", k.job.table.name, len(contract)))
+			k.recs = int64(len(order))
+			k.ins.Grow(len(order) * 120)
+			k.upd.Grow(len(order) * 120)
+			k.ids.Grow(len(order) * 10)
+			inscomma := ""
+			updcomma := ""
+			idscomma := ""
+
+			for it := range order {
+				fmt.Fprintf(&k.ids, "%s%d", idscomma, order[it].OrderID)
+				idscomma = ","
+				if ord, ok := k.job.sqldata[uint64(order[it].OrderID)]; ok {
+					if ord != order[it].Issued.toktime() {
+						//issued has changed, add to UPD queue...
+						fmt.Fprintf(&k.upd, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", updcomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
+						updcomma = ","
+						k.updrecs++
+					} else {
+						// exists in database and order has not changed
+					}
+					delete(k.job.sqldata, uint64(order[it].OrderID)) //remove matched items from the map
+				} else {
+					fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", inscomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
+					inscomma = ","
+					k.insrecs++
+					//fmt.FprintF(&insertQueue, "(blah blah blah)", ...) // does not exist in database.
+				}
+
+			}
+			k.pageMutex.Unlock()
+			k.job.jobMutex.Unlock()
+			// log(k.cip, fmt.Sprintf("tables[\"%s\"].handlePageData added %d ins, %d upd, ended with %d in db", k.job.table.name, k.insrecs, k.updrecs, len(k.job.sqldata)))
+			return nil
+		},
+		handlePageCached: func(k *kpage) error {
+			k.pageMutex.Lock()
+			k.job.jobMutex.Lock()
+			defer k.pageMutex.Unlock()
+			defer k.job.jobMutex.Unlock()
+			order := strings.Split(k.ids.String(), ",")
+			k.recs = int64(len(order))
+			var orderID int
+			var orderspurged int
+			for it := range order {
+				orderID, _ = strconv.Atoi(order[it])
+				if _, ok := k.job.sqldata[uint64(orderID)]; ok {
+					delete(k.job.sqldata, uint64(orderID)) //remove matched items from the map
+					orderspurged++
+				} else {
+					return errors.New("etag data does not match table")
+				}
+
+			}
+			//log(k.cip, fmt.Sprintf("tables[\"%s\"].handlePageCached called with %d from etag, %d purged.", k.job.table.name, len(contract), contractspurged))
+			return nil
+		},
+		handleWriteIns: func(k *kjob) int64 { //jobMutex is already locked for us.
+			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleWriteIns called with %db", k.table.name, k.ins.Len()))
+			return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), k.ins.String(), k.table.duplicates))
+		},
+		handleWriteUpd: func(k *kjob) int64 { //jobMutex is already locked for us.
+			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleWriteUpd called with %db", k.table.name, k.upd.Len()))
+			return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), k.upd.String(), k.table.duplicates))
+		},
+		handleEndGood: func(k *kjob) int64 { //jobMutex is already locked for us.
+			var delrecords int64
+			if len(k.sqldata) > 0 {
+				var b strings.Builder
+				comma := ""
+				for it := range k.sqldata {
+					fmt.Fprintf(&b, "%s%d", comma, it)
+					comma = ","
+				}
+				query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s IN (%s)", k.table.database, k.table.name, k.table.primaryKey, b.String())
+				delrecords = safeExec(query)
+			}
+			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleEndGood had %d records, %d deleted.", k.table.name, len(k.sqldata), delrecords))
+
+			k.sqldata = make(map[uint64]uint64)
+			return delrecords
+		},
+		handleEndFail: func(k *kjob) { //jobMutex is already locked for us.
+			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleEndFail had %d records", k.table.name, len(k.sqldata)))
+			k.sqldata = make(map[uint64]uint64)
+			return
+		},
 	}
 
 }
+
+/*
+	handlePageData: func(t *table, k *kpage) error {
+		var jsonData orders
+		if err := json.Unmarshal(k.body, &jsonData); err != nil {
+			return err
+		}
+		length := len(jsonData)
+		k.pageMutex.Lock()
+		k.Ins.Grow(length * 104)
+		k.InsIds.Grow(length * 11)
+		comma := ","
+		length--
+		for it := range jsonData {
+			//fmt.Printf("Record %d of %d: order_id:%d\n", it, length, jsonData[it].OrderID)
+			if length == it {
+				comma = ""
+			}
+			fmt.Fprintf(&k.Ins, "(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d,%d)%s", k.job.Source, k.job.Owner, jsonData[it].Duration, jsonData[it].IsBuyOrder.toSQL(), jsonData[it].Issued.toSQLDate(), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, k.job.RunTag, comma)
+			fmt.Fprintf(&k.InsIds, "%d%s", jsonData[it].OrderID, comma)
+		}
+		if k.dead || !k.job.running {
+			return errors.New("transform finished a dead job")
+		}
+		k.InsReady = true
+		k.pageMutex.Unlock()
+		k.job.jobMutex.Lock()
+		k.job.InsLength += length + 1
+		k.job.jobMutex.Unlock()
+		k.pageMutex.Lock()
+		defer k.pageMutex.Unlock()
+		return nil
+	},
+	handleEndGood: func(t *table, k *kjob) int64 {
+		query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE source = %s AND NOT last_seen = %d", t.database, t.name, k.Source, k.RunTag)
+		return safeQuery(query)
+
+	},
+*/

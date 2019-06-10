@@ -18,7 +18,6 @@ func specInit() {
 		database:   "karkinos",
 		name:       "spec",
 		primaryKey: "method:spec:endpoint",
-		keys:       []string{},
 		_columnOrder: []string{
 			"method",
 			"spec",

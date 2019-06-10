@@ -120,15 +120,16 @@ func (debugOnlyMutex *debugOnlyMutex) Lock() {
 	var contested bool
 	stime := time.Now().UnixNano()
 	for !atomic.CompareAndSwapUint32(&debugOnlyMutex.lock, 0, 1) {
-		contested = true
 		time.Sleep(5 * time.Millisecond)
 		ms++
 		if ms > 250*it {
+			contested = true
 			ms = 0
 			it++
 			ctime := time.Now().UnixNano()
 			pc, fn, line, _ := runtime.Caller(1)
 			justfn := strings.Split(fn, "/")
+
 			fmt.Printf("%.3f [%s(%s):%d] Requested Lock %dms ago, Locked by [%s(%s):%d] %dms ago\n",
 				float64(ctime)/float64(time.Second),
 				justfn[len(justfn)-1], runtime.FuncForPC(pc).Name(), line,
@@ -140,18 +141,21 @@ func (debugOnlyMutex *debugOnlyMutex) Lock() {
 	}
 	pc, fn, line, _ := runtime.Caller(1)
 	justfn := strings.Split(fn, "/")
+
+	if contested {
+		ctime := time.Now().UnixNano()
+		fmt.Printf("%.3f [%s(%s):%d] Contested Lock freed after %dms by [%s(%s):%d]\n",
+			float64(ctime)/float64(time.Second),
+			justfn[len(justfn)-1], runtime.FuncForPC(pc).Name(), line,
+			int((ctime-stime)/int64(time.Millisecond)),
+			debugOnlyMutex.lockByFile, debugOnlyMutex.lockByFunc, debugOnlyMutex.lockByLine,
+		)
+	}
 	debugOnlyMutex.lockByFile = justfn[len(justfn)-1]
 	debugOnlyMutex.lockByFunc = runtime.FuncForPC(pc).Name()
 	debugOnlyMutex.lockByLine = line
 	debugOnlyMutex.lockByTime = time.Now().UnixNano()
-	if contested {
-		ctime := time.Now().UnixNano()
-		fmt.Printf("%.3f [%s(%s):%d] Contested Lock freed after %dms\n",
-			float64(ctime)/float64(time.Second),
-			debugOnlyMutex.lockByFile, debugOnlyMutex.lockByFunc, debugOnlyMutex.lockByLine,
-			int((ctime-stime)/int64(time.Millisecond)),
-		)
-	}
+
 }
 
 //(standin for sync.Mutex.Unlock) unlocks debugOnlyMutex. If the mutex is already unlocked, it prints a descriptive message to stdout

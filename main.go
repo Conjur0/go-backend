@@ -3,7 +3,7 @@
 package main
 
 import (
-	"strconv"
+	"fmt"
 	"time"
 )
 
@@ -15,25 +15,30 @@ func main() {
 	log(nil, "Hello World!")
 	initConfig()
 	initClient()
-	specInit()
-	kjobQueueInit()
-	kpageQueueInit()
 	sqlInit()
+	specInit()
+	kjobInit()
+	kpageInit()
+	etagTableInit()
 	tablesInit()
-	etagInit()
+	etagQueryInit()
 
 	tock := time.NewTimer(3 * time.Second) // 3s
 	go func() {
 		for range tock.C {
-			//newKjob("get", "/v4", "/characters/{character_id}/skills/", map[string]string{"character_id": "1120048880"}, 0)
-
+			// //newKjob("get", "/v4", "/characters/{character_id}/skills/", map[string]string{"character_id": "1120048880"}, 0)
 			for i := range eveRegions {
-				newKjob("get", "/v1", "/markets/{region_id}/orders/", map[string]string{"region_id": strconv.Itoa(eveRegions[i])}, 0, tables["orders"])
+				newKjob("get", "/v1", "/markets/{region_id}/orders/", fmt.Sprintf("{\"region_id\": \"%d\"}", eveRegions[i]), 0, "orders")
 			}
+		}
+	}()
+	cock := time.NewTimer(20 * time.Second) // 3s
+	go func() {
+		for range cock.C {
+			// //newKjob("get", "/v4", "/characters/{character_id}/skills/", map[string]string{"character_id": "1120048880"}, 0)
 			for i := range eveRegions {
-				newKjob("get", "/v1", "/contracts/public/{region_id}/", map[string]string{"region_id": strconv.Itoa(eveRegions[i])}, 0, tables["contracts"])
+				newKjob("get", "/v1", "/contracts/public/{region_id}/", fmt.Sprintf("{\"region_id\": \"%d\"}", eveRegions[i]), 0, "contracts")
 			}
-
 		}
 	}()
 

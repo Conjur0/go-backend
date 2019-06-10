@@ -22,14 +22,14 @@ var getetagids *sql.Stmt
 var setetag *sql.Stmt
 var killetag *sql.Stmt
 
-// initialize eTag table declaration and prepared queries
-func etagInit() {
+// initialize etag table definition
+func etagTableInit() {
 	tables["etag"] = &table{
 		database:   "karkinos",
 		name:       "etag",
 		primaryKey: "cip",
-		keys: []string{
-			"etag",
+		keys: map[string]string{
+			"etag": "etag",
 		},
 		_columnOrder: []string{
 			"cip",
@@ -46,6 +46,10 @@ func etagInit() {
 		},
 		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",
 	}
+}
+
+// initialize eTag prepared queries
+func etagQueryInit() {
 	var err error
 	getetag, err = database.Prepare(fmt.Sprintf("SELECT etag FROM `%s`.`%s` WHERE cip = ? LIMIT 1", tables["etag"].database, tables["etag"].name))
 	if err != nil {
@@ -112,7 +116,7 @@ func getEtagIds(cip string) (string, int) {
 
 // stores list of ids, and data length, for the given CIP
 func setEtag(cip string, etag string, ids string, length int) {
-	if len(ids) == 0 || length == 0 {
+	if length == 0 {
 		log(cip, "Invalid Data Received!")
 		return
 	}

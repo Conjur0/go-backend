@@ -17,25 +17,25 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
 var kpageQueue *kpageQueueS
 var kpageQueueTick *time.Ticker
-var kpageQueueMutex = sync.RWMutex{}
+var kpageQueueMutex debugOnlyMutex
 
-var errorRemain = 100
+var errorRemain uint32 = 100
 var errorResetTimer *time.Timer
 
 var queueTicker *time.Ticker
 
 var backoff = false
+var backoffTimer *time.Timer
 
 var curInFlight = 0
 var lastInFlight = 0
 var inFlight = make(map[int]*kpage, c.MaxInFlight)
-var inFlightMutex = sync.RWMutex{}
+var inFlightMutex debugOnlyMutex
 var pagesFired = 0
 var lastFired = 0
 
@@ -57,11 +57,13 @@ type kpage struct {
 	req       *http.Request
 	running   int64
 	dead      bool
-	pageMutex sync.Mutex
-	Ins       strings.Builder
-	InsIds    strings.Builder
-	InsReady  bool
-	etag      string
+	pageMutex debugOnlyMutex
+	ids       strings.Builder
+	ins       strings.Builder
+	upd       strings.Builder
+	recs      int64
+	insrecs   int64
+	updrecs   int64
 }
 
 func (kpageQueueS *kpageQueueS) Push(element *kpage) {
@@ -119,7 +121,7 @@ func gokpageQueueTick() {
 }
 
 //initialize kpage queue tickers
-func kpageQueueInit() {
+func kpageInit() {
 
 	kpageQueue = &kpageQueueS{
 		elements: make(chan *kpage, 8192),
@@ -171,8 +173,12 @@ func queueLog() {
 	}
 }
 
-func (k *kjob) newPage(page uint16) {
-	k.PagesQueued++
+func (k *kjob) newPage(page uint16, requeue bool) {
+	if requeue {
+		k.jobMutex.Lock()
+		defer k.jobMutex.Unlock()
+		k.APIErrors++
+	}
 	k.page[page] = &kpage{
 		job:  k,
 		page: page,
@@ -188,46 +194,41 @@ func (k *kpage) destroy() {
 	k.dead = true
 }
 func (k *kpage) requestPage() {
+	var err error
 	defer k.destroy()
 	if k.dead {
 		return
 	}
+	k.job.jobMutex.Lock()
+	k.job.APICalls++
+	k.job.jobMutex.Unlock()
+
 	addMetric(k.cip)
 	if backoff {
 		log(k.cip, "backoff trigger")
-		k.job.LockJob()
-		k.job.stopJob(false)
-		k.job.APIErrors++
-		k.job.UnlockJob()
+		k.job.stopJob(true)
 		return
 	}
-	etaghdr := getEtag(k.cip)
 
-	req, err := http.NewRequest(strings.ToUpper(k.job.Method), c.EsiURL+k.job.URL+"&page="+strconv.Itoa(int(k.page)), nil)
+	k.req, err = http.NewRequest(strings.ToUpper(k.job.Method), c.EsiURL+k.job.URL+"&page="+strconv.Itoa(int(k.page)), nil)
 	if err != nil {
 		log(k.cip, err)
-		k.job.LockJob()
-		k.job.stopJob(false)
-		k.job.APIErrors++
-		k.job.UnlockJob()
+		k.job.forceNextRun(86400000)
+		k.job.stopJob(true)
 		return
 	}
-	k.req = req
+
+	etaghdr := getEtag(k.cip)
 	if len(etaghdr) > 0 {
 		k.req.Header.Add("If-None-Match", etaghdr)
-		//log("kpage.go:k.requestPage("+k.cip+") etaghdr", "Attach "+etaghdr)
 	}
 	if k.job.spec.security != "" && len(k.job.Token) > 5 {
 		k.req.Header.Add("Authorization", "Bearer "+k.job.Token)
-		//log("kpage.go:k.requestPage("+k.cip+") Security", "Attach "+k.job.Token)
 	}
 	resp, err := client.Do(k.req)
 	if err != nil {
 		log(k.cip, err)
-		k.job.LockJob()
-		k.job.PagesQueued--
-		k.job.newPage(k.page)
-		k.job.UnlockJob()
+		k.job.newPage(k.page, true)
 		return
 	}
 
@@ -235,23 +236,33 @@ func (k *kpage) requestPage() {
 	if k.dead {
 		return
 	}
-	k.job.LockJob()
-	k.job.APICalls++
-	k.job.UnlockJob()
+
+	//extract headers
+	// errorlimitremain, okerrorlimitremain := resp.Header["x-esi-error-limit-remain"]
+	// errorlimitreset, okerrorlimitreset := resp.Header["x-esi-error-limit-reset"]
+
+	// if okerrorlimitremain && okerrorlimitreset && resp.StatusCode > 399 {
 	/*
-				TODO: re-add error_limit/backoff
-				      if (this.response_headers['x-esi-error-limit-remain'] && (this.response_headers[':status'] > 399)) {
-		        error_remain = this.response_headers['x-esi-error-limit-remain'];
-		        clearTimeout(error_reset_timer);
-		        error_reset_timer = setTimeout(() => { error_remain = 100; }, (parseInt(this.response_headers['x-esi-error-limit-reset']) * 1000));
+			errt, _ := strconv.Atoi(errorlimitreset[0])
+			errr, _ := strconv.Atoi(errorlimitremain[0])
+			atomic.StoreUint32(&errorRemain, uint32(errr))
+			errorResetTimer.Reset(time.Duration(errt) * time.Second) //TODO: add goroutine that watches this timer, and resets to 100
 
-		        if (error_remain < 30) {
-		          console.log("Backing off!");
-		          backoff = true;
-		          setTimeout(() => { backoff = false; console.log("Resuming..."); }, 20000);
-		        }
+		}
+		/*
+					TODO: re-add error_limit/backoff
+					      if (this.response_headers['x-esi-error-limit-remain'] && (this.response_headers[':status'] > 399)) {
+			        error_remain = this.response_headers['x-esi-error-limit-remain'];
+			        clearTimeout(error_reset_timer);
+			        error_reset_timer = setTimeout(() => { error_remain = 100; }, (parseInt(this.response_headers['x-esi-error-limit-reset']) * 1000));
 
-					}
+			        if (error_remain < 30) {
+			          console.log("Backing off!");
+			          backoff = true;
+			          setTimeout(() => { backoff = false; console.log("Resuming..."); }, 20000);
+			        }
+
+						}
 	*/
 
 	//k.job.heart.Reset(30 * time.Second)
@@ -261,78 +272,84 @@ func (k *kpage) requestPage() {
 		k.body, err = ioutil.ReadAll(resp.Body)
 		if err != nil {
 			log(k.cip, err)
-			k.job.LockJob()
-			k.job.PagesQueued--
-			k.job.newPage(k.page)
-			k.job.UnlockJob()
-		}
-		if _, ok := resp.Header["Etag"]; ok {
-			k.etag = resp.Header["Etag"][0]
-		}
-		bDownload += len(k.body)
-		k.job.LockJob()
-		k.job.BytesDownloaded += len(k.body)
-		k.job.UnlockJob()
-	} else if resp.StatusCode == 304 {
-		ids, length := getEtagIds(k.cip)
-		k.InsIds.WriteString(ids)
-		if length == 0 || len(ids) == 0 {
-			log(k.cip, "No Data returned!")
-			killEtag(k.cip)
-			k.job.LockJob()
-			k.job.PagesQueued--
-			k.job.newPage(k.page)
-			k.job.UnlockJob()
+			k.job.newPage(k.page, true)
 			return
 		}
-		foo := strings.Split(ids, ",")
+		if err = k.job.table.handlePageData(k); err != nil {
+			log(k.cip, err)
+			k.job.newPage(k.page, true)
+			return
+		}
+
+		k.job.jobMutex.Lock()
+		k.pageMutex.Lock()
+		if k.insrecs > 0 {
+			if k.job.RecordsIns > 0 {
+				k.job.ins.WriteString(",")
+			}
+			k.job.ins.WriteString(k.ins.String())
+
+			k.job.RecordsIns += k.insrecs
+		}
+		if k.updrecs > 0 {
+			if k.job.RecordsUpd > 0 {
+				k.job.upd.WriteString(",")
+			}
+			k.job.upd.WriteString(k.upd.String())
+			k.job.RecordsUpd += k.updrecs
+		}
+		k.job.jobMutex.Unlock()
+		k.pageMutex.Unlock()
+
+		if etag, ok := resp.Header["Etag"]; ok {
+			setEtag(k.cip, etag[0], k.ids.String(), len(k.body))
+		}
+		k.job.jobMutex.Lock()
+		bDownload += len(k.body)
+		k.job.BytesDownloaded += len(k.body)
+		k.job.jobMutex.Unlock()
+	} else if resp.StatusCode == 304 {
+		ids, length := getEtagIds(k.cip)
+		if length == 0 {
+			killEtag(k.cip)
+			log(k.cip, "No Data returned!")
+			k.job.newPage(k.page, true)
+			return
+		}
+		k.ids.WriteString(ids)
+		if k.ids.Len() > 0 {
+			if err = k.job.table.handlePageCached(k); err != nil {
+				killEtag(k.cip)
+				log(k.cip, err)
+				k.job.newPage(k.page, true)
+				return
+			}
+		}
+		k.job.jobMutex.Lock()
 		bCached += length
-		k.job.LockJob()
 		k.job.BytesCached += length
-		k.job.IDLength += len(foo)
 		k.job.APICache++
-		k.job.UnlockJob()
+		k.job.jobMutex.Unlock()
 	}
 
 	if resp.StatusCode == 200 || resp.StatusCode == 304 {
-		k.job.updateExp(resp.Header["Expires"][0])
+		if exp, ok := resp.Header["Expires"]; ok {
+			k.job.updateExp(exp[0])
+		}
 		if pgs, ok := resp.Header["X-Pages"]; ok {
 			k.job.updatePageCount(pgs[0])
 		}
 
+		k.job.jobMutex.Lock()
+		k.job.Records += k.recs
+		k.job.jobMutex.Unlock()
 		if k.dead {
 			return
 		}
 
-		if len(k.etag) > 0 {
-			if k.writeData() {
-				k.job.LockJob()
-				k.job.APIErrors++
-				k.job.PagesQueued--
-				k.job.newPage(k.page)
-				k.job.UnlockJob()
-			}
-			setEtag(k.cip, k.etag, k.InsIds.String(), len(k.body))
-		} else {
-			k.InsReady = true
-		}
-
-		go k.job.processPage()
+		k.job.processPage()
 	} else {
 		log(k.cip, fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db in %dms", resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body), getMetric(k.cip)))
-
-		k.job.LockJob()
-		k.job.APIErrors++
-		k.job.PagesQueued--
-		k.job.newPage(k.page)
-		k.job.UnlockJob()
+		k.job.newPage(k.page, true)
 	}
-}
-
-func (k *kpage) writeData() bool {
-	//log("kpage.go:writeData("+k.cip+")", fmt.Sprintf("called with %db", len(k.body)))
-	if err := k.job.table.handlePageData(k.job.table, k); err != nil {
-		return true
-	}
-	return false
 }
