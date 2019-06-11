@@ -115,12 +115,16 @@ func tablesInitorders() {
 
 			for it := range order {
 				fmt.Fprintf(&k.ids, "%s%d", idscomma, order[it].OrderID)
-				idscomma = ","
+				if k.ins.Len() > 0 {
+					idscomma = ","
+				}
 				if ord, ok := k.job.sqldata[uint64(order[it].OrderID)]; ok {
 					if ord != order[it].Issued.toktime() {
 						//issued has changed, add to UPD queue...
 						fmt.Fprintf(&k.upd, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", updcomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
-						updcomma = ","
+						if k.upd.Len() > 0 {
+							updcomma = ","
+						}
 						k.updrecs++
 					} else {
 						// exists in database and order has not changed
@@ -128,7 +132,9 @@ func tablesInitorders() {
 					delete(k.job.sqldata, uint64(order[it].OrderID)) //remove matched items from the map
 				} else {
 					fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", inscomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
-					inscomma = ","
+					if k.ins.Len() > 0 {
+						inscomma = ","
+					}
 					k.insrecs++
 					//fmt.FprintF(&insertQueue, "(blah blah blah)", ...) // does not exist in database.
 				}
@@ -176,7 +182,9 @@ func tablesInitorders() {
 				comma := ""
 				for it := range k.sqldata {
 					fmt.Fprintf(&b, "%s%d", comma, it)
-					comma = ","
+					if b.Len() > 0 {
+						comma = ","
+					}
 				}
 				query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s IN (%s)", k.table.database, k.table.name, k.table.primaryKey, b.String())
 				delrecords = safeExec(query)
@@ -194,42 +202,3 @@ func tablesInitorders() {
 	}
 
 }
-
-/*
-	handlePageData: func(t *table, k *kpage) error {
-		var jsonData orders
-		if err := json.Unmarshal(k.body, &jsonData); err != nil {
-			return err
-		}
-		length := len(jsonData)
-		k.pageMutex.Lock()
-		k.Ins.Grow(length * 104)
-		k.InsIds.Grow(length * 11)
-		comma := ","
-		length--
-		for it := range jsonData {
-			//fmt.Printf("Record %d of %d: order_id:%d\n", it, length, jsonData[it].OrderID)
-			if length == it {
-				comma = ""
-			}
-			fmt.Fprintf(&k.Ins, "(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d,%d)%s", k.job.Source, k.job.Owner, jsonData[it].Duration, jsonData[it].IsBuyOrder.toSQL(), jsonData[it].Issued.toSQLDate(), jsonData[it].LocationID, jsonData[it].MinVolume, jsonData[it].OrderID, jsonData[it].Price, jsonData[it].Range, jsonData[it].TypeID, jsonData[it].VolumeRemain, jsonData[it].VolumeTotal, k.job.RunTag, comma)
-			fmt.Fprintf(&k.InsIds, "%d%s", jsonData[it].OrderID, comma)
-		}
-		if k.dead || !k.job.running {
-			return errors.New("transform finished a dead job")
-		}
-		k.InsReady = true
-		k.pageMutex.Unlock()
-		k.job.jobMutex.Lock()
-		k.job.InsLength += length + 1
-		k.job.jobMutex.Unlock()
-		k.pageMutex.Lock()
-		defer k.pageMutex.Unlock()
-		return nil
-	},
-	handleEndGood: func(t *table, k *kjob) int64 {
-		query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE source = %s AND NOT last_seen = %d", t.database, t.name, k.Source, k.RunTag)
-		return safeQuery(query)
-
-	},
-*/

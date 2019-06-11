@@ -1,13 +1,16 @@
 {
+  "esi_url": "https://esi.evetech.net",
   "domain": "yourdomain.com",
   "email": "you@yourdomain.com",
   "max_in_flight": 20,
+  "min_cache_pct": 5,
   "mariadb": {
     "user": "karkinos",
     "pass": "mypasswordissupersecret"
   },
-  "oauth": [
-    {
+
+  "oauth": {
+    "Discord": {
       "name": "Discord",
       "clientID": "ffff_SNIP_ffff",
       "clientSecret": "ffff_SNIP_ffff",
@@ -19,7 +22,7 @@
       "verifyURL": "https://discordapp.com/api/users/@me",
       "revokeURL": "https://discordapp.com/api/oauth2/token/revoke"
     },
-    {
+    "CCP": {
       "name": "CCP",
       "clientID": "ffff_SNIP_ffff",
       "clientSecret": "ffff_SNIP_ffff",
@@ -31,5 +34,6 @@
       "verifyURL": "https://login.eveonline.com/oauth/verify",
       "revokeURL": "https://login.eveonline.com/oauth/revoke"
     }
-  ]
+  }
 }
+

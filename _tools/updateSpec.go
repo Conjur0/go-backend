@@ -6,56 +6,15 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
 
-var configFile = "./config.json"
-
-type conf struct {
-	EsiURL  string  `json:"esi_url"`
-	Mariadb mariadb `json:"mariadb"`
-}
-
-type mariadb struct {
-	User string `json:"user"`
-	Pass string `json:"pass"`
-}
-
-var database *sql.DB
-var c conf
-var client http.Client
 var wg sync.WaitGroup
 
-func readConfigJSON() {
-	jsonFile, err := os.Open(configFile)
-	if err != nil {
-		log("updateSpec.go:readConfigJSON() os.Open", err)
-		panic(err)
-	}
-	defer jsonFile.Close()
-	byteValue, errr := ioutil.ReadAll(jsonFile)
-	if errr != nil {
-		log("updateSpec.go:readConfigJSON() ioutil.ReadAll", err)
-		panic(err)
-	}
-	if err := json.Unmarshal(byteValue, &c); err != nil {
-		log("updateSpec.go:readConfigJSON() json.Unmarshal", err)
-		panic(err)
-	}
-	log("updateSpec.go:readConfigJSON()", fmt.Sprintf("Read %db from %s", len(byteValue), configFile))
-	byteValue = nil
-}
-func log(caller string, message interface{}) {
-	fmt.Printf("%.3f [%s] %s\n", float64(ktime())/1000, caller, message)
-}
-func ktime() int64 { return time.Now().UnixNano() / int64(time.Millisecond) }
-
-func main() {
+func pmain() {
 	readConfigJSON()
 
 	var err error

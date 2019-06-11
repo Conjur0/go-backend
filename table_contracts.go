@@ -165,7 +165,9 @@ func tablesInitcontracts() {
 			var status uint64
 			for it := range contract {
 				fmt.Fprintf(&k.ids, "%s%d", idscomma, contract[it].ContractID)
-				idscomma = ","
+				if k.ids.Len() > 0 {
+					idscomma = ","
+				}
 				if ord, ok := k.job.sqldata[uint64(contract[it].ContractID)]; ok {
 					status = 0
 					switch contract[it].Status.ifnull() {
@@ -210,7 +212,9 @@ func tablesInitcontracts() {
 							contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(),
 							contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward,
 							contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
-						updcomma = ","
+						if k.upd.Len() > 0 {
+							updcomma = ","
+						}
 						k.updrecs++
 					} else {
 						// exists in database and order has not changed
@@ -231,7 +235,9 @@ func tablesInitcontracts() {
 						contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(),
 						contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward,
 						contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
-					inscomma = ","
+					if k.ins.Len() > 0 {
+						inscomma = ","
+					}
 					k.insrecs++
 					//fmt.FprintF(&insertQueue, "(blah blah blah)", ...) // does not exist in database.
 				}
@@ -281,7 +287,9 @@ func tablesInitcontracts() {
 				comma := ""
 				for it := range k.sqldata {
 					fmt.Fprintf(&b, "%s%d", comma, it)
-					comma = ","
+					if b.Len() > 0 {
+						comma = ","
+					}
 				}
 				query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s IN (%s)", tables["contracts"].database, tables["contracts"].name, tables["contracts"].primaryKey, b.String())
 				delrecords = safeExec(query)
@@ -299,45 +307,3 @@ func tablesInitcontracts() {
 	}
 
 }
-
-/*
-
-	handlePageData: func(t *table, k *kpage) error {
-		var contract contracts
-		if err := json.Unmarshal(k.body, &contract); err != nil {
-			return err
-		}
-
-		length := len(contract)
-		k.pageMutex.Lock()
-		k.Ins.Grow(length * 104)
-		comma := ""
-		for it := range contract {
-			if contract[it].Status == "" {
-				contract[it].Status = "outstanding"
-			}
-			if contract[it].Availability == "" {
-				contract[it].Availability = "public"
-			}
-			fmt.Fprintf(&k.Ins, "%s(%d,%d,%s,%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,%s,%s,%s,%f)", comma,
-				contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability.ifnull(),
-				contract[it].Buyout, contract[it].Collateral, contract[it].ContractID, contract[it].DateAccepted.toSQLDate(),
-				contract[it].DateCompleted.toSQLDate(), contract[it].DateExpired.toSQLDate(), contract[it].DateIssued.toSQLDate(),
-				contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(),
-				contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward,
-				contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
-			comma = ","
-		}
-		if k.dead || !k.job.running {
-			return errors.New("transform finished a dead job")
-		}
-		k.InsReady = true
-		k.pageMutex.Unlock()
-		k.job.jobMutex.Lock()
-		k.job.InsLength += length
-		k.job.jobMutex.Unlock()
-		k.pageMutex.Lock()
-		defer k.pageMutex.Unlock()
-		return nil
-	},
-*/

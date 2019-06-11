@@ -129,15 +129,16 @@ func gokjobQueueTick() {
 type kjob struct {
 
 	// "read-only" variables (not mutex'd, only written by newKjob())
-	id     int
-	Method string `json:"method"` //Method: 'get', 'put', 'update', 'delete'
-	Source string `json:"source"` //Entity: "region_id": "10000002", "character_id": "1120048880"
-	Owner  string `json:"owner"`
-	URL    string `json:"url"` //URL: concat of Spec and Endpoint, with entity processed
-	CI     string `json:"ci"`  //CI: concat of endpoint:JSON.Marshall(entity)
-	spec   specS
-	Token  string `json:"token"` //evesso access_token
-	RunTag int64  `json:"runTag"`
+	id      int
+	Method  string `json:"method"` //Method: 'get', 'put', 'update', 'delete'
+	Source  string `json:"source"` //Entity: "region_id": "10000002", "character_id": "1120048880"
+	Owner   string `json:"owner"`
+	URL     string `json:"url"` //URL: concat of Spec and Endpoint, with entity processed
+	CI      string `json:"ci"`  //CI: concat of endpoint:JSON.Marshall(entity)
+	spec    specS
+	Token   string `json:"token"` //evesso access_token
+	TokenID string `json:"token_id"`
+	RunTag  int64  `json:"runTag"`
 
 	NextRun   int64 `json:"nextRun"`
 	Expires   int64 `json:"expires"`    //milliseconds since 1970, when cache miss will occur
@@ -178,15 +179,19 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 	var entity map[string]string
 	json.Unmarshal([]byte(ciString), &entity)
 
-	var sentity, owner string
+	var sentity, owner, tokenid string
 	var ok bool
 	if sentity, ok = entity["region_id"]; !ok {
-		if sentity, ok = entity["structure_id"]; !ok {
-			if sentity, ok = entity["character_id"]; !ok {
-				log(nil, "Invalid job received: unable to resolve entity")
-				return
+		if sentity, ok = entity["corporation_id"]; !ok {
+			if sentity, ok = entity["structure_id"]; !ok {
+				if sentity, ok = entity["character_id"]; !ok {
+					log(nil, "Invalid job received: unable to resolve entity")
+					return
+				}
+				owner = sentity
+			} else {
+				owner = "NULL"
 			}
-			owner = sentity
 		} else {
 			owner = "NULL"
 		}
@@ -194,12 +199,15 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 		owner = "NULL"
 	}
 
+	tokenid, _ = entity["token_id"]
+
 	tmp := kjob{
 		id:       id,
 		Method:   method,
 		Source:   sentity,
 		Owner:    owner,
 		Token:    "none",
+		TokenID:  tokenid,
 		Pages:    pages,
 		PullType: pages,
 		URL:      fmt.Sprintf("%s%s?datasource=tranquility", specnum, endpoint),
@@ -250,7 +258,7 @@ func (k *kjob) stopJob(failed bool) {
 		k.table.handleEndFail(k)
 	} else {
 		k.RemovedRows += k.table.handleEndGood(k)
-		log(k.CI, fmt.Sprintf("Pages:%d/%d Records:%d Affected:%d Removed:%d nextRun:%dms runtime:%dms", k.PagesProcessed, k.Pages, k.Records, k.AffectedRows, k.RemovedRows, k.Expires-ktime(), getMetric(k.CI)))
+		//log(k.CI, fmt.Sprintf("Pages:%d/%d Records:%d Affected:%d Removed:%d nextRun:%dms runtime:%dms", k.PagesProcessed, k.Pages, k.Records, k.AffectedRows, k.RemovedRows, k.Expires-ktime(), getMetric(k.CI)))
 		joblog.Exec(ktime(), k.id, k.PagesProcessed, k.Records, k.AffectedRows, k.RemovedRows, getMetric(k.CI), k.BytesDownloaded, k.BytesCached)
 
 	}
@@ -267,6 +275,8 @@ func (k *kjob) stopJob(failed bool) {
 	k.Records = 0
 	k.AffectedRows = 0
 	k.RemovedRows = 0
+	k.BytesCached = 0
+	k.BytesDownloaded = 0
 	k.ins.Reset()
 	k.upd.Reset()
 	k.jobMutex.Unlock()
