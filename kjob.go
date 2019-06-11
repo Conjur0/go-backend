@@ -305,26 +305,9 @@ func (k *kjob) requestHead() {
 		k.stopJob(true)
 		return
 	}
-	/*
-				TODO: re-add error_limit/backoff
-				      if (this.response_headers['x-esi-error-limit-remain'] && (this.response_headers[':status'] > 399)) {
-		        error_remain = this.response_headers['x-esi-error-limit-remain'];
-		        clearTimeout(error_reset_timer);
-		        error_reset_timer = setTimeout(() => { error_remain = 100; }, (parseInt(this.response_headers['x-esi-error-limit-reset']) * 1000));
-
-		        if (error_remain < 30) {
-		          console.log("Backing off!");
-		          backoff = true;
-		          setTimeout(() => { backoff = false; console.log("Resuming..."); }, 20000);
-		        }
-
-					}
-	*/
 	defer resp.Body.Close()
-
 	if resp.StatusCode == 200 {
 		k.updateExp(resp.Header["Expires"][0])
-
 		var timepct float64
 		if k.ExpiresIn > 0 {
 			timepct = 100 * (float64(k.ExpiresIn) / float64(k.spec.cache*1000))
@@ -336,11 +319,11 @@ func (k *kjob) requestHead() {
 			k.stopJob(true)
 			return
 		}
-
 		if pgs, ok := resp.Header["X-Pages"]; ok {
 			k.updatePageCount(pgs[0])
 		}
-
+	} else {
+		processBackoff(resp.Header)
 	}
 }
 
@@ -350,13 +333,12 @@ func (k *kjob) updateExp(expire string) {
 		k.jobMutex.Lock()
 		k.Expires = int64(exp.UnixNano() / int64(time.Millisecond))
 		k.ExpiresIn = k.Expires - ktime()
-		k.NextRun = k.Expires + 1250
+		k.NextRun = k.Expires + 250
 		k.jobMutex.Unlock()
 	}
 }
 
 func (k *kjob) forceNextRun(exp int64) {
-	log(k.CI, fmt.Sprintf("next run forced to %dms", exp))
 	k.jobMutex.Lock()
 	k.Expires = ktime() + exp
 	k.ExpiresIn = exp

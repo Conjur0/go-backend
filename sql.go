@@ -91,7 +91,7 @@ Again:
 		log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
 		tries++
 		if tries < 11 {
-			time.Sleep(1 * time.Second)
+			time.Sleep(5 * time.Second)
 			goto Again
 		}
 		panic(query)
@@ -108,7 +108,7 @@ Again:
 			log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
 			tries++
 			if tries < 11 {
-				time.Sleep(1 * time.Second)
+				time.Sleep(5 * time.Second)
 				goto Again
 			}
 			panic(query)
@@ -132,7 +132,7 @@ PrepareAgain:
 		log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
 		tries++
 		if tries < 11 {
-			time.Sleep(1 * time.Second)
+			time.Sleep(5 * time.Second)
 			goto PrepareAgain
 		}
 		panic(query)

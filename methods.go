@@ -93,9 +93,9 @@ type mariadb struct {
 }
 
 type oauth struct {
-	Name         string `json:"name"`
 	ClientID     string `json:"clientID"`
 	ClientSecret string `json:"clientSecret"`
+	AuthToken    string `json:"authToken"`
 	Callback     string `json:"callback"`
 	Redirect     string `json:"redirect"`
 	AuthURL      string `json:"authURL"`
@@ -103,6 +103,7 @@ type oauth struct {
 	TokenURL     string `json:"tokenURL"`
 	VerifyURL    string `json:"verifyURL"`
 	RevokeURL    string `json:"revokeURL"`
+	APIBase      string `json:"apiBase"`
 }
 
 // debugging replacement for sync.Mutex that does more than block for ever. Do not use in production, it is VERY slow.

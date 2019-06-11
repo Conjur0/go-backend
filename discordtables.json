@@ -1,0 +1,216 @@
+{
+  "channels": {
+    "db": "karkinos",
+    "name": "channels",
+    "primary_key": "id",
+    "keys": {
+      "guild_id": "guild_id",
+      "position": "position",
+      "flags": "flags"
+    },
+    "column_order": [
+      "guild_id",
+      "id",
+      "name",
+      "position",
+      "last_message_id"
+    ],
+    "duplicates": "ON DUPLICATE KEY UPDATE price=VALUES(price),volume_remain=VALUES(volume_remain)",
+    "proto": [
+      "`guild_id` bigint(20) NOT NULL",
+      "`id` bigint(20) NOT NULL",
+      "`name` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL",
+      "`position` tinyint(4) NOT NULL",
+      "`last_message_id` bigint(20) NOT NULL",
+      "`flags` int(11) NOT NULL DEFAULT 0"
+    ],
+    "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+  },
+  "pings": {
+    "db": "karkinos",
+    "name": "pings",
+    "primary_key": "id",
+    "keys": {
+      "channel_id": "channel_id",
+      "message_id": "message_id",
+      "object_id": "object_id",
+      "user_id": "user_id",
+      "location_id": "location_id",
+      "character_id": "character_id",
+      "dtg": "dtg"
+    },
+    "column_order": [
+      "channel_id",
+      "message_id",
+      "object_id",
+      "user_id",
+      "location_id",
+      "character_id",
+      "dtg",
+      "message"
+    ],
+    "duplicates": "ON DUPLICATE KEY UPDATE price=VALUES(price),volume_remain=VALUES(volume_remain)",
+    "proto": [
+      "`id` bigint(20) NOT NULL AUTO_INCREMENT",
+      "`channel_id` bigint(20) DEFAULT NULL",
+      "`message_id` bigint(20) DEFAULT NULL",
+      "`object_id` bigint(20) DEFAULT NULL",
+      "`user_id` bigint(20) DEFAULT NULL",
+      "`location_id` bigint(20) DEFAULT NULL",
+      "`character_id` bigint(20) DEFAULT NULL",
+      "`dtg` bigint(20) NOT NULL",
+      "`message` varchar(2000) NOT NULL"
+    ],
+    "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+  },
+  "roles": {
+    "db": "karkinos",
+    "name": "roles",
+    "primary_key": "id",
+    "keys": {
+      "mentionable": "mentionable",
+      "position": "position",
+      "permissions": "permissions",
+      "siteRoles": "siteRoles",
+      "guild_id": "guild_id"
+    },
+    "column_order": [
+      "guild_id",
+      "id",
+      "hoist",
+      "name",
+      "mentionable",
+      "color",
+      "position",
+      "permissions"
+    ],
+    "duplicates": "ON DUPLICATE KEY UPDATE price=VALUES(price),volume_remain=VALUES(volume_remain)",
+    "proto": [
+      "`guild_id` bigint(20) NOT NULL",
+      "`id` bigint(20) NOT NULL",
+      "`hoist` tinyint(4) NOT NULL",
+      "`name` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL",
+      "`mentionable` tinyint(4) NOT NULL",
+      "`color` int(11) NOT NULL",
+      "`position` tinyint(4) NOT NULL",
+      "`permissions` bigint(20) NOT NULL",
+      "`siteRoles` smallint(6) NOT NULL DEFAULT 0"
+    ],
+    "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+  },
+  "servers": {
+    "db": "karkinos",
+    "name": "servers",
+    "primary_key": "id",
+    "keys": {
+      "team_id": "team_id"
+    },
+    "column_order": [
+      "id",
+      "name"
+    ],
+    "duplicates": "ON DUPLICATE KEY UPDATE price=VALUES(price),volume_remain=VALUES(volume_remain)",
+    "proto": [
+      "`id` bigint(20) NOT NULL",
+      "`name` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL",
+      "`team_id` smallint(6) NOT NULL DEFAULT -1",
+      "`img` varchar(128) NOT NULL DEFAULT ''",
+      "`bg` varchar(128) NOT NULL DEFAULT ''"
+    ],
+    "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+  },
+  "": {
+    "db": "karkinos",
+    "name": "",
+    "primary_key": "",
+    "keys": {
+      "": "",
+      "": ""
+    },
+    "column_order": [
+      "",
+      ""
+    ],
+    "duplicates": "ON DUPLICATE KEY UPDATE price=VALUES(price),volume_remain=VALUES(volume_remain)",
+    "proto": [
+      "",
+      ""
+    ],
+    "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+  },
+  "": {
+    "db": "karkinos",
+    "name": "",
+    "primary_key": "",
+    "keys": {
+      "": "",
+      "": ""
+    },
+    "column_order": [
+      "",
+      ""
+    ],
+    "duplicates": "ON DUPLICATE KEY UPDATE price=VALUES(price),volume_remain=VALUES(volume_remain)",
+    "proto": [
+      "",
+      ""
+    ],
+    "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+  },
+  "": {
+    "db": "karkinos",
+    "name": "",
+    "primary_key": "",
+    "keys": {
+      "": "",
+      "": ""
+    },
+    "column_order": [
+      "",
+      ""
+    ],
+    "duplicates": "ON DUPLICATE KEY UPDATE price=VALUES(price),volume_remain=VALUES(volume_remain)",
+    "proto": [
+      "",
+      ""
+    ],
+    "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+  }
+}
+
+
+/*
+CREATE TABLE `users` (
+ `guild_id` bigint(20) NOT NULL,
+ `id` bigint(20) NOT NULL,
+ `username` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+ `discriminator` smallint(6) NOT NULL,
+ `nick` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+ `color` int(11) NOT NULL DEFAULT 0,
+ `enabled` tinyint(4) NOT NULL DEFAULT 0,
+ PRIMARY KEY (`guild_id`,`id`),
+ KEY `id` (`id`),
+ KEY `enabled` (`enabled`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1
+
+CREATE TABLE `user_roles` (
+ `user_id` bigint(20) NOT NULL,
+ `role_id` bigint(20) NOT NULL,
+ `guild_id` bigint(20) NOT NULL,
+ PRIMARY KEY (`user_id`,`role_id`,`guild_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1
+
+CREATE TABLE `webhooks` (
+ `guild_id` bigint(20) NOT NULL,
+ `id` bigint(20) NOT NULL,
+ `name` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+ `channel_id` bigint(20) NOT NULL,
+ `token` varchar(256) NOT NULL,
+ `rate_reset` bigint(20) DEFAULT NULL,
+ `rate_remain` int(11) NOT NULL DEFAULT 5,
+ PRIMARY KEY (`id`),
+ KEY `guild_id` (`guild_id`),
+ KEY `channel_id` (`channel_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1
+
+*/

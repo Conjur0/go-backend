@@ -23,11 +23,10 @@ import (
 
 var kpageQueue *kpageQueueS
 var kpageQueueTick *time.Ticker
-var kpageQueueMutex sync.Mutex
 
-// var errorRemain uint32 = 100
-// var errorResetTimer *time.Timer
-// var backoffTimer *time.Timer
+var errorRemain metric
+var errorResetTimer *time.Timer
+var backoffTimer *time.Timer
 
 var backoff = false
 var queueTicker *time.Ticker
@@ -71,8 +70,6 @@ type kpage struct {
 }
 
 func (kpageQueueS *kpageQueueS) Push(element *kpage) {
-	kpageQueueMutex.Lock()
-	defer kpageQueueMutex.Unlock()
 	select {
 	case kpageQueueS.elements <- element:
 		kpageQueueS.len.Inc()
@@ -81,8 +78,6 @@ func (kpageQueueS *kpageQueueS) Push(element *kpage) {
 	}
 }
 func (kpageQueueS *kpageQueueS) Pop() *kpage {
-	kpageQueueMutex.Lock()
-	defer kpageQueueMutex.Unlock()
 	select {
 	case e := <-kpageQueueS.elements:
 		kpageQueueS.len.Dec()
@@ -92,8 +87,8 @@ func (kpageQueueS *kpageQueueS) Pop() *kpage {
 	}
 }
 func gokpageQueueTick() {
-	for range kpageQueueTick.C {
-		for kpageQueue.len.Get() > 0 && (curInFlight.Get() < c.MaxInFlight) && !backoff {
+	for ctime := range kpageQueueTick.C {
+		for !backoff && kpageQueue.len.Get() > 0 && (curInFlight.Get() < c.MaxInFlight) {
 			qitem := kpageQueue.Pop()
 			if qitem.dead == false {
 				var err uint64
@@ -107,7 +102,7 @@ func gokpageQueueTick() {
 				curInFlight.Inc()
 				pagesFired.Inc()
 				inFlight[err] = qitem
-				inFlight[err].running = ktime()
+				inFlight[err].running = ctime.UnixNano() / int64(time.Millisecond)
 				go inFlight[err].requestPage()
 				inFlightMutex.Unlock()
 			} else {
@@ -116,12 +111,24 @@ func gokpageQueueTick() {
 		}
 	}
 }
+func backoffReset() {
+	for range backoffTimer.C {
+		backoff = false
+		log(nil, "backoff reset")
+	}
+}
+func errorReset() {
+	for range errorResetTimer.C {
+		errorRemain.Set(100)
+		log(nil, "errorReset restored to 100")
+	}
+}
 
 //initialize kpage queue tickers
 func kpageInit() {
 
 	kpageQueue = &kpageQueueS{
-		elements: make(chan *kpage, 8192),
+		elements: make(chan *kpage, 16383),
 	}
 
 	kpageQueueTick = time.NewTicker(10 * time.Millisecond)
@@ -131,9 +138,14 @@ func kpageInit() {
 		inFlight[i] = &kpage{dead: true}
 	}
 
-	queueTicker = time.NewTicker(1 * time.Second)
+	queueTicker = time.NewTicker(1 * time.Minute)
 	go queueLog()
 
+	backoffTimer = time.NewTimer(time.Second * 60 * 60 * 24 * 365) // 1 year.
+	go backoffReset()
+
+	errorResetTimer = time.NewTimer(time.Second * 60 * 60 * 24 * 365) // 1 year.
+	go errorReset()
 	log(nil, "kpage tickers started")
 }
 
@@ -144,25 +156,18 @@ func queueLog() {
 			lastFinished = pagesFinished.Get()
 			lastFired = pagesFired.Get()
 			lastInFlight = curInFlight.Get()
-			entry := fmt.Sprintf("%12d/%12d Q:%6d Fired:%6d Done:%6d Hot(%3d/%3d) ", bCached.Get(), bDownload.Get(), kpageQueue.len.Get(), lastFired, lastFinished, lastInFlight, c.MaxInFlight)
-			// fntry := ""
-			gntry := ""
-			// hntry := ""
+			var b strings.Builder
+			fmt.Fprintf(&b, "%12d/%12d Q:%6d Fired:%6d Done:%6d Hot(%2d/%d) ", bCached.Get(), bDownload.Get(), kpageQueue.len.Get(), lastFired, lastFinished, lastInFlight, c.MaxInFlight)
 			inFlightMutex.Lock()
 			for it := uint64(0); it < c.MaxInFlight; it++ {
-				// fntry = fmt.Sprintf("%s%12s", fntry, inFlight[it].whatDo)
-				// hntry = fmt.Sprintf("%s%11d ", hntry, inFlight[it].job.entity)
 				if inFlight[it].dead {
-					gntry = gntry + "**** "
+					b.WriteString("**** ")
 				} else {
-					gntry = fmt.Sprintf("%s%4d ", gntry, timenow-inFlight[it].running)
+					fmt.Fprintf(&b, "%4d ", timenow-inFlight[it].running)
 				}
 			}
 			inFlightMutex.Unlock()
-			log("<QUEUE>", entry+gntry)
-			// log("       ", fntry)
-			// log("       ", gntry)
-			// log("       ", hntry)
+			log("<QUEUE>", b.String())
 		}
 	}
 }
@@ -230,36 +235,6 @@ func (k *kpage) requestPage() {
 	if k.dead {
 		return
 	}
-
-	//extract headers
-	// errorlimitremain, okerrorlimitremain := resp.Header["x-esi-error-limit-remain"]
-	// errorlimitreset, okerrorlimitreset := resp.Header["x-esi-error-limit-reset"]
-
-	// if okerrorlimitremain && okerrorlimitreset && resp.StatusCode > 399 {
-	/*
-			errt, _ := strconv.Atoi(errorlimitreset[0])
-			errr, _ := strconv.Atoi(errorlimitremain[0])
-			atomic.StoreUint32(&errorRemain, uint32(errr))
-			errorResetTimer.Reset(time.Duration(errt) * time.Second) //TODO: add goroutine that watches this timer, and resets to 100
-
-		}
-		/*
-					TODO: re-add error_limit/backoff
-					      if (this.response_headers['x-esi-error-limit-remain'] && (this.response_headers[':status'] > 399)) {
-			        error_remain = this.response_headers['x-esi-error-limit-remain'];
-			        clearTimeout(error_reset_timer);
-			        error_reset_timer = setTimeout(() => { error_remain = 100; }, (parseInt(this.response_headers['x-esi-error-limit-reset']) * 1000));
-
-			        if (error_remain < 30) {
-			          console.log("Backing off!");
-			          backoff = true;
-			          setTimeout(() => { backoff = false; console.log("Resuming..."); }, 20000);
-			        }
-
-						}
-	*/
-
-	//k.job.heart.Reset(30 * time.Second)
 
 	if resp.StatusCode == 200 {
 		var err error
@@ -340,5 +315,25 @@ func (k *kpage) requestPage() {
 	} else {
 		log(k.cip, fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db", resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body)))
 		k.job.newPage(k.page, true)
+		processBackoff(resp.Header)
+		//extract headers
 	}
+
+}
+func processBackoff(hdr http.Header) {
+	errorlimitremain, okerrorlimitremain := hdr["x-esi-error-limit-remain"]
+	errorlimitreset, okerrorlimitreset := hdr["x-esi-error-limit-reset"]
+	if okerrorlimitremain && okerrorlimitreset {
+		errt, _ := strconv.Atoi(errorlimitreset[0])
+		errr, _ := strconv.Atoi(errorlimitremain[0])
+		errorRemain.Set(uint64(errr))
+		errorResetTimer.Reset(time.Duration(errt) * time.Second)
+		log(nil, fmt.Sprintf("errorRemain set to %d, Timer enqueued for %ds", errr, errt))
+		if errr < 100 {
+			backoff = true
+			backoffTimer.Reset(30 * time.Second)
+			log(nil, "backing off for 30 seconds")
+		}
+	}
+
 }
