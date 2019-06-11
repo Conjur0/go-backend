@@ -144,7 +144,6 @@ func tablesInitcontracts() {
 			return nil
 		},
 		handlePageData: func(k *kpage) error {
-
 			k.pageMutex.Lock()
 			k.job.jobMutex.Lock()
 			var contract contracts
@@ -209,10 +208,10 @@ func tablesInitcontracts() {
 			return nil
 		},
 		handleWriteIns: func(k *kjob) int64 { //jobMutex is already locked for us.
-			return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), k.ins.String(), k.table.duplicates))
+			return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), k.insJob.String(), k.table.duplicates))
 		},
 		handleWriteUpd: func(k *kjob) int64 { //jobMutex is already locked for us.
-			return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), k.upd.String(), k.table.duplicates))
+			return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), k.updJob.String(), k.table.duplicates))
 		},
 		handleEndGood: func(k *kjob) int64 { //jobMutex is already locked for us.
 			var delrecords int64

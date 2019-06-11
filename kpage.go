@@ -25,30 +25,30 @@ var kpageQueue *kpageQueueS
 var kpageQueueTick *time.Ticker
 var kpageQueueMutex sync.Mutex
 
-var errorRemain uint32 = 100
-var errorResetTimer *time.Timer
-
-var queueTicker *time.Ticker
+// var errorRemain uint32 = 100
+// var errorResetTimer *time.Timer
+// var backoffTimer *time.Timer
 
 var backoff = false
-var backoffTimer *time.Timer
+var queueTicker *time.Ticker
 
-var curInFlight = 0
-var lastInFlight = 0
-var inFlight = make(map[int]*kpage, c.MaxInFlight)
+var curInFlight metric
+var lastInFlight uint64
+var inFlight = make(map[uint64]*kpage, c.MaxInFlight)
 var inFlightMutex sync.Mutex
-var pagesFired = 0
-var lastFired = 0
 
-var pagesFinished = 0
-var lastFinished = 0
+var pagesFired metric
+var lastFired uint64
 
-var bCached = 0
-var bDownload = 0
+var pagesFinished metric
+var lastFinished uint64
+
+var bCached metric
+var bDownload metric
 
 type kpageQueueS struct {
 	elements chan *kpage
-	len      int
+	len      metric
 }
 type kpage struct {
 	job       *kjob
@@ -72,7 +72,7 @@ func (kpageQueueS *kpageQueueS) Push(element *kpage) {
 	defer kpageQueueMutex.Unlock()
 	select {
 	case kpageQueueS.elements <- element:
-		kpageQueueS.len++
+		kpageQueueS.len.Inc()
 	default:
 		panic("Queue full")
 	}
@@ -82,7 +82,7 @@ func (kpageQueueS *kpageQueueS) Pop() *kpage {
 	defer kpageQueueMutex.Unlock()
 	select {
 	case e := <-kpageQueueS.elements:
-		kpageQueueS.len--
+		kpageQueueS.len.Dec()
 		return e
 	default:
 		panic("Queue empty")
@@ -90,23 +90,19 @@ func (kpageQueueS *kpageQueueS) Pop() *kpage {
 }
 func gokpageQueueTick() {
 	for range kpageQueueTick.C {
-		kpageQueueMutex.Lock()
-		kpageQueueLen := kpageQueue.len
-		kpageQueueMutex.Unlock()
-
-		for kpageQueueLen > 0 && (curInFlight < c.MaxInFlight) && !backoff {
+		for kpageQueue.len.Get() > 0 && (curInFlight.Get() < c.MaxInFlight) && !backoff {
 			qitem := kpageQueue.Pop()
 			if qitem.dead == false {
-				err := -1
+				var err uint64
 				inFlightMutex.Lock()
-				for it := 0; it < c.MaxInFlight; it++ {
+				for it := uint64(0); it < c.MaxInFlight; it++ {
 					if inFlight[it].dead {
 						err = it
 						break
 					}
 				}
-				curInFlight++
-				pagesFired++
+				curInFlight.Inc()
+				pagesFired.Inc()
 				inFlight[err] = qitem
 				inFlight[err].running = ktime()
 				go inFlight[err].requestPage()
@@ -114,9 +110,6 @@ func gokpageQueueTick() {
 			} else {
 				// log("kpage.go:gokpageQueueTick()", fmt.Sprintf("Encountered dead cip in queue %s", qitem.cip))
 			}
-			kpageQueueMutex.Lock()
-			kpageQueueLen = kpageQueue.len
-			kpageQueueMutex.Unlock()
 		}
 	}
 }
@@ -131,7 +124,7 @@ func kpageInit() {
 	kpageQueueTick = time.NewTicker(10 * time.Millisecond)
 	go gokpageQueueTick()
 
-	for i := 0; i < c.MaxInFlight; i++ {
+	for i := uint64(0); i < c.MaxInFlight; i++ {
 		inFlight[i] = &kpage{dead: true}
 	}
 
@@ -143,20 +136,17 @@ func kpageInit() {
 
 func queueLog() {
 	for range queueTicker.C {
-		kpageQueueMutex.Lock()
-		fff := kpageQueue.len
-		kpageQueueMutex.Unlock()
-		if fff > 0 || lastFinished != pagesFinished || lastFired != pagesFired || lastInFlight != curInFlight {
+		if kpageQueue.len.Get() > 0 || lastFinished != pagesFinished.Get() || lastFired != pagesFired.Get() || lastInFlight != curInFlight.Get() {
 			timenow := ktime()
-			lastFinished = pagesFinished
-			lastFired = pagesFired
-			lastInFlight = curInFlight
-			entry := fmt.Sprintf("%12d/%12d Q:%6d Fired:%6d Done:%6d Hot(%3d of %3d) ", bCached, bDownload, fff, lastFired, lastFinished, lastInFlight, c.MaxInFlight)
+			lastFinished = pagesFinished.Get()
+			lastFired = pagesFired.Get()
+			lastInFlight = curInFlight.Get()
+			entry := fmt.Sprintf("%12d/%12d Q:%6d Fired:%6d Done:%6d Hot(%3d/%3d) ", bCached.Get(), bDownload.Get(), kpageQueue.len.Get(), lastFired, lastFinished, lastInFlight, c.MaxInFlight)
 			// fntry := ""
 			gntry := ""
 			// hntry := ""
 			inFlightMutex.Lock()
-			for it := 0; it < c.MaxInFlight; it++ {
+			for it := uint64(0); it < c.MaxInFlight; it++ {
 				// fntry = fmt.Sprintf("%s%12s", fntry, inFlight[it].whatDo)
 				// hntry = fmt.Sprintf("%s%11d ", hntry, inFlight[it].job.entity)
 				if inFlight[it].dead {
@@ -188,9 +178,11 @@ func (k *kjob) newPage(page uint16, requeue bool) {
 }
 func (k *kpage) destroy() {
 	if k.running > 0 {
-		curInFlight--
+		curInFlight.Dec()
 		k.running = 0
 	}
+	k.insrecs = 0
+	k.updrecs = 0
 	k.ins.Reset()
 	k.ids.Reset()
 	k.upd.Reset()
@@ -284,17 +276,17 @@ func (k *kpage) requestPage() {
 		k.pageMutex.Lock()
 		if k.insrecs > 0 {
 			if k.job.RecordsIns > 0 {
-				k.job.ins.WriteString(",")
+				k.job.insJob.WriteString(",")
 			}
-			k.job.ins.WriteString(k.ins.String())
+			k.job.insJob.WriteString(k.ins.String())
 
 			k.job.RecordsIns += k.insrecs
 		}
 		if k.updrecs > 0 {
 			if k.job.RecordsUpd > 0 {
-				k.job.upd.WriteString(",")
+				k.job.updJob.WriteString(",")
 			}
-			k.job.upd.WriteString(k.upd.String())
+			k.job.updJob.WriteString(k.upd.String())
 			k.job.RecordsUpd += k.updrecs
 		}
 		k.job.jobMutex.Unlock()
@@ -303,10 +295,8 @@ func (k *kpage) requestPage() {
 		if etag, ok := resp.Header["Etag"]; ok {
 			setEtag(k.cip, etag[0], k.ids.String(), len(k.body))
 		}
-		k.job.jobMutex.Lock()
-		bDownload += len(k.body)
-		k.job.BytesDownloaded += len(k.body)
-		k.job.jobMutex.Unlock()
+		bDownload.Add(uint64(len(k.body)))
+		k.job.BytesDownloaded.Add(uint64(len(k.body)))
 	} else if resp.StatusCode == 304 {
 		ids, length := getEtagIds(k.cip)
 		if length == 0 {
@@ -324,10 +314,8 @@ func (k *kpage) requestPage() {
 				return
 			}
 		}
-		k.job.jobMutex.Lock()
-		bCached += length
-		k.job.BytesCached += length
-		k.job.jobMutex.Unlock()
+		bCached.Add(uint64(length))
+		k.job.BytesCached.Add(uint64(length))
 	}
 
 	if resp.StatusCode == 200 || resp.StatusCode == 304 {

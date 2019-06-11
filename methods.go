@@ -80,7 +80,7 @@ type conf struct {
 	EsiURL      string           `json:"esi_url"`
 	Domain      string           `json:"domain"`
 	Email       string           `json:"email"`
-	MaxInFlight int              `json:"max_in_flight"`
+	MaxInFlight uint64           `json:"max_in_flight"`
 	MinCachePct float64          `json:"min_cache_pct"`
 	Mariadb     mariadb          `json:"mariadb"`
 	Oauth       map[string]oauth `json:"oauth"`

@@ -145,13 +145,13 @@ type kjob struct {
 	Expires   int64 `json:"expires"`    //milliseconds since 1970, when cache miss will occur
 	ExpiresIn int64 `json:"expires_in"` //milliseconds until expiration, at completion of first page (or head) pulled
 
-	ins             strings.Builder // builder of records pending insert
+	insJob          strings.Builder // builder of records pending insert
 	RecordsIns      int64           `json:"records_ins"`     // count of records pending insert
-	BytesDownloaded int             `json:"bytesDownloaded"` //total bytes downloaded
+	BytesDownloaded metric          `json:"bytesDownloaded"` //total bytes downloaded
 
-	upd         strings.Builder // builder of records pending update
+	updJob      strings.Builder // builder of records pending update
 	RecordsUpd  int64           `json:"records_upd"` // count of records pending update
-	BytesCached int             `json:"bytesCached"` //total bytes cached
+	BytesCached metric          `json:"bytesCached"` //total bytes cached
 
 	PullType       uint16 `json:"pullType"`
 	Pages          uint16 `json:"pages"`          //Pages: 0, 1
@@ -259,9 +259,7 @@ func (k *kjob) stopJob(failed bool) {
 		k.table.handleEndFail(k)
 	} else {
 		k.RemovedRows += k.table.handleEndGood(k)
-		//log(k.CI, fmt.Sprintf("Pages:%d/%d Records:%d Affected:%d Removed:%d nextRun:%dms runtime:%dms", k.PagesProcessed, k.Pages, k.Records, k.AffectedRows, k.RemovedRows, k.Expires-ktime(), getMetric(k.CI)))
-		joblog.Exec(ktime(), k.id, k.PagesProcessed, k.Records, k.AffectedRows, k.RemovedRows, getMetric(k.CI), k.BytesDownloaded, k.BytesCached)
-
+		joblog.Exec(ktime(), k.id, k.PagesProcessed, k.Records, k.AffectedRows, k.RemovedRows, getMetric(k.CI), k.BytesDownloaded.Get(), k.BytesCached.Get())
 	}
 	k.heart.Stop()
 	for it := range k.page {
@@ -276,10 +274,12 @@ func (k *kjob) stopJob(failed bool) {
 	k.Records = 0
 	k.AffectedRows = 0
 	k.RemovedRows = 0
-	k.BytesCached = 0
-	k.BytesDownloaded = 0
-	k.ins.Reset()
-	k.upd.Reset()
+	k.BytesCached.Reset()
+	k.BytesDownloaded.Reset()
+	k.insJob.Reset()
+	k.updJob.Reset()
+	k.RecordsIns = 0
+	k.RecordsUpd = 0
 	k.jobMutex.Unlock()
 	//defer runtime.GC()
 }
@@ -397,23 +397,23 @@ func (k *kjob) updatePageCount(pages string) {
 func (k *kjob) processPage() {
 	k.jobMutex.Lock()
 	k.PagesProcessed++
-	pagesFinished++
+	pagesFinished.Inc()
 	//update last_seen on cached entries if
 	//  15000+ cached ids ready, or
 	//  non-zero cached ids ready, and this is the last page
-	if (k.upd.Len() >= 1000000) || ((k.upd.Len() > 0) && k.PagesProcessed == k.Pages) {
+	if (k.updJob.Len() >= 250000) || ((k.updJob.Len() > 0) && k.PagesProcessed == k.Pages) {
 		k.AffectedRows += k.table.handleWriteUpd(k)
 		k.RecordsUpd = 0
-		k.upd.Reset()
+		k.updJob.Reset()
 	}
 
 	//insert records if:
 	//  15000+ records ready, or
 	//  non-zero records ready, and this is the last page
-	if (k.ins.Len() >= 1000000) || ((k.ins.Len() > 0) && k.PagesProcessed == k.Pages) {
+	if (k.insJob.Len() >= 250000) || ((k.insJob.Len() > 0) && k.PagesProcessed == k.Pages) {
 		k.AffectedRows += k.table.handleWriteIns(k)
 		k.RecordsIns = 0
-		k.ins.Reset()
+		k.insJob.Reset()
 	}
 
 	k.jobMutex.Unlock()
