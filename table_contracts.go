@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+var contractStatus = map[string]uint64{`NULL`: 1, `'outstanding'`: 1, `'in_progress'`: 2, `'finished_issuer'`: 3, `'finished_contractor'`: 4, `'finished'`: 5, `'cancelled'`: 6, `'rejected'`: 7, `'failed'`: 8, `'deleted'`: 9, `'reversed'`: 10, `'expired'`: 11}
+
 type contracts []contract
 type contract struct {
 	AcceptorID          int32     `json:"acceptor_id"`
@@ -123,7 +125,6 @@ func tablesInitcontracts() {
 		},
 		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",
 		handleStart: func(k *kjob) error { //jobMutex is already locked for us.
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleStart called", k.table.name))
 			res := safeQuery(fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` WHERE %s=%s", tables["contracts"].database, tables["contracts"].name, tables["contracts"].jobKey, k.Source))
 			defer res.Close()
 			if !res.Next() {
@@ -132,9 +133,7 @@ func tablesInitcontracts() {
 			}
 			var numRecords int
 			res.Scan(&numRecords)
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleStart got %d records", k.table.name, numRecords))
 			k.sqldata = make(map[uint64]uint64, numRecords)
-
 			ress := safeQuery(fmt.Sprintf("SELECT %s,%s FROM `%s`.`%s` WHERE %s=%s", tables["contracts"].primaryKey, tables["contracts"].changedKey, tables["contracts"].database, tables["contracts"].name, tables["contracts"].jobKey, k.Source))
 			defer ress.Close()
 			var key, data uint64
@@ -142,7 +141,6 @@ func tablesInitcontracts() {
 				ress.Scan(&key, &data)
 				k.sqldata[key] = data
 			}
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleStart have %d records", k.table.name, len(k.sqldata)))
 			return nil
 		},
 		handlePageData: func(k *kpage) error {
@@ -153,71 +151,34 @@ func tablesInitcontracts() {
 			if err := json.Unmarshal(k.body, &contract); err != nil {
 				return err
 			}
-			// log(k.cip, fmt.Sprintf("tables[\"%s\"].handlePageData called with %d records", k.job.table.name, len(contract)))
 			k.recs = int64(len(contract))
+			k.ins.Reset()
 			k.ins.Grow(len(contract) * 256)
+			k.upd.Reset()
 			k.upd.Grow(len(contract) * 256)
+			k.ids.Reset()
 			k.ids.Grow(len(contract) * 10)
 			inscomma := ""
 			updcomma := ""
 			idscomma := ""
 
-			var status uint64
 			for it := range contract {
 				fmt.Fprintf(&k.ids, "%s%d", idscomma, contract[it].ContractID)
-				if k.ids.Len() > 0 {
-					idscomma = ","
-				}
+				idscomma = ","
 				if ord, ok := k.job.sqldata[uint64(contract[it].ContractID)]; ok {
-					status = 0
-					switch contract[it].Status.ifnull() {
-					case `NULL`:
-						status = 1
-					case `'outstanding'`:
-						status = 1
-					case `'in_progress'`:
-						status = 2
-					case `'finished_issuer'`:
-						status = 3
-					case `'finished_contractor'`:
-						status = 4
-					case `'finished'`:
-						status = 5
-					case `'cancelled'`:
-						status = 6
-					case `'rejected'`:
-						status = 7
-					case `'failed'`:
-						status = 8
-					case `'deleted'`:
-						status = 9
-					case `'reversed'`:
-						status = 10
-					case `'expired'`:
-						status = 11
-					}
 
-					if ord != status {
-						//status has changed, add to UPD queue...
+					if ord != contractStatus[contract[it].Status.ifnull()] {
 						if contract[it].Status == "" {
 							contract[it].Status = "outstanding"
 						}
 						if contract[it].Availability == "" {
 							contract[it].Availability = "public"
 						}
-						fmt.Fprintf(&k.upd, "%s(%s,%s,%d,%d,%s,%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,%s,%s,%s,%f)", updcomma, k.job.Source, k.job.Owner,
-							contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability.ifnull(),
-							contract[it].Buyout, contract[it].Collateral, contract[it].ContractID, contract[it].DateAccepted.toSQLDate(),
-							contract[it].DateCompleted.toSQLDate(), contract[it].DateExpired.toSQLDate(), contract[it].DateIssued.toSQLDate(),
-							contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(),
-							contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward,
-							contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
-						if k.upd.Len() > 0 {
-							updcomma = ","
-						}
+						fmt.Fprintf(&k.upd, "%s(%s,%s,%d,%d,%s,%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,%s,%s,%s,%f)", updcomma, k.job.Source, k.job.Owner, contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability.ifnull(), contract[it].Buyout, contract[it].Collateral, contract[it].ContractID, contract[it].DateAccepted.toSQLDate(), contract[it].DateCompleted.toSQLDate(), contract[it].DateExpired.toSQLDate(), contract[it].DateIssued.toSQLDate(), contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(), contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward, contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
+						updcomma = ","
 						k.updrecs++
 					} else {
-						// exists in database and order has not changed
+						// exists in database and order has not changed, no-op
 					}
 					delete(k.job.sqldata, uint64(contract[it].ContractID)) //remove matched items from the map
 				} else {
@@ -228,25 +189,13 @@ func tablesInitcontracts() {
 					if contract[it].Availability == "" {
 						contract[it].Availability = "public"
 					}
-					fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,%s,%s,%s,%f)", inscomma, k.job.Source, k.job.Owner,
-						contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability.ifnull(),
-						contract[it].Buyout, contract[it].Collateral, contract[it].ContractID, contract[it].DateAccepted.toSQLDate(),
-						contract[it].DateCompleted.toSQLDate(), contract[it].DateExpired.toSQLDate(), contract[it].DateIssued.toSQLDate(),
-						contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(),
-						contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward,
-						contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
-					if k.ins.Len() > 0 {
-						inscomma = ","
-					}
+					fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,%s,%s,%s,%f)", inscomma, k.job.Source, k.job.Owner, contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability.ifnull(), contract[it].Buyout, contract[it].Collateral, contract[it].ContractID, contract[it].DateAccepted.toSQLDate(), contract[it].DateCompleted.toSQLDate(), contract[it].DateExpired.toSQLDate(), contract[it].DateIssued.toSQLDate(), contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(), contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward, contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
+					inscomma = ","
 					k.insrecs++
-					//fmt.FprintF(&insertQueue, "(blah blah blah)", ...) // does not exist in database.
 				}
-
 			}
 			k.pageMutex.Unlock()
 			k.job.jobMutex.Unlock()
-			// log(k.cip, fmt.Sprintf("tables[\"%s\"].handlePageData added %d ins, %d upd, ended with %d in db", k.job.table.name, k.insrecs, k.updrecs, len(k.job.sqldata)))
-
 			return nil
 		},
 		handlePageCached: func(k *kpage) error {
@@ -268,16 +217,12 @@ func tablesInitcontracts() {
 				}
 
 			}
-
-			//log(k.cip, fmt.Sprintf("tables[\"%s\"].handlePageCached called with %d from etag, %d purged.", k.job.table.name, len(contract), contractspurged))
 			return nil
 		},
 		handleWriteIns: func(k *kjob) int64 { //jobMutex is already locked for us.
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleWriteIns called with %db", k.table.name, k.ins.Len()))
 			return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), k.ins.String(), k.table.duplicates))
 		},
 		handleWriteUpd: func(k *kjob) int64 { //jobMutex is already locked for us.
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleWriteUpd called with %db", k.table.name, k.upd.Len()))
 			return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), k.upd.String(), k.table.duplicates))
 		},
 		handleEndGood: func(k *kjob) int64 { //jobMutex is already locked for us.
@@ -287,20 +232,15 @@ func tablesInitcontracts() {
 				comma := ""
 				for it := range k.sqldata {
 					fmt.Fprintf(&b, "%s%d", comma, it)
-					if b.Len() > 0 {
-						comma = ","
-					}
+					comma = ","
 				}
 				query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s IN (%s)", tables["contracts"].database, tables["contracts"].name, tables["contracts"].primaryKey, b.String())
 				delrecords = safeExec(query)
 			}
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleEndGood had %d records, %d deleted.", k.table.name, len(k.sqldata), delrecords))
-
 			k.sqldata = make(map[uint64]uint64)
 			return delrecords
 		},
 		handleEndFail: func(k *kjob) { //jobMutex is already locked for us.
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleEndFail had %d records", k.table.name, len(k.sqldata)))
 			k.sqldata = make(map[uint64]uint64)
 			return
 		},

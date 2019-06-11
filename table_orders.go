@@ -106,8 +106,11 @@ func tablesInitorders() {
 			}
 			// log(k.cip, fmt.Sprintf("tables[\"%s\"].handlePageData called with %d records", k.job.table.name, len(contract)))
 			k.recs = int64(len(order))
+			k.ins.Reset()
 			k.ins.Grow(len(order) * 120)
+			k.upd.Reset()
 			k.upd.Grow(len(order) * 120)
+			k.ids.Reset()
 			k.ids.Grow(len(order) * 10)
 			inscomma := ""
 			updcomma := ""
@@ -115,34 +118,25 @@ func tablesInitorders() {
 
 			for it := range order {
 				fmt.Fprintf(&k.ids, "%s%d", idscomma, order[it].OrderID)
-				if k.ins.Len() > 0 {
-					idscomma = ","
-				}
+				idscomma = ","
 				if ord, ok := k.job.sqldata[uint64(order[it].OrderID)]; ok {
 					if ord != order[it].Issued.toktime() {
-						//issued has changed, add to UPD queue...
 						fmt.Fprintf(&k.upd, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", updcomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
-						if k.upd.Len() > 0 {
-							updcomma = ","
-						}
+						updcomma = ","
 						k.updrecs++
 					} else {
-						// exists in database and order has not changed
+						// exists in database and order has not changed, no-op
 					}
 					delete(k.job.sqldata, uint64(order[it].OrderID)) //remove matched items from the map
 				} else {
 					fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", inscomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
-					if k.ins.Len() > 0 {
-						inscomma = ","
-					}
+					inscomma = ","
 					k.insrecs++
-					//fmt.FprintF(&insertQueue, "(blah blah blah)", ...) // does not exist in database.
 				}
 
 			}
 			k.pageMutex.Unlock()
 			k.job.jobMutex.Unlock()
-			// log(k.cip, fmt.Sprintf("tables[\"%s\"].handlePageData added %d ins, %d upd, ended with %d in db", k.job.table.name, k.insrecs, k.updrecs, len(k.job.sqldata)))
 			return nil
 		},
 		handlePageCached: func(k *kpage) error {
@@ -168,11 +162,9 @@ func tablesInitorders() {
 			return nil
 		},
 		handleWriteIns: func(k *kjob) int64 { //jobMutex is already locked for us.
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleWriteIns called with %db", k.table.name, k.ins.Len()))
 			return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), k.ins.String(), k.table.duplicates))
 		},
 		handleWriteUpd: func(k *kjob) int64 { //jobMutex is already locked for us.
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleWriteUpd called with %db", k.table.name, k.upd.Len()))
 			return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.database, k.table.name, k.table.columnOrder(), k.upd.String(), k.table.duplicates))
 		},
 		handleEndGood: func(k *kjob) int64 { //jobMutex is already locked for us.
@@ -182,20 +174,15 @@ func tablesInitorders() {
 				comma := ""
 				for it := range k.sqldata {
 					fmt.Fprintf(&b, "%s%d", comma, it)
-					if b.Len() > 0 {
-						comma = ","
-					}
+					comma = ","
 				}
 				query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s IN (%s)", k.table.database, k.table.name, k.table.primaryKey, b.String())
 				delrecords = safeExec(query)
 			}
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleEndGood had %d records, %d deleted.", k.table.name, len(k.sqldata), delrecords))
-
 			k.sqldata = make(map[uint64]uint64)
 			return delrecords
 		},
 		handleEndFail: func(k *kjob) { //jobMutex is already locked for us.
-			// log(k.CI, fmt.Sprintf("tables[\"%s\"].handleEndFail had %d records", k.table.name, len(k.sqldata)))
 			k.sqldata = make(map[uint64]uint64)
 			return
 		},
