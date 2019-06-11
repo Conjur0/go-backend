@@ -104,13 +104,9 @@ func tablesInitorders() {
 			if err := json.Unmarshal(k.body, &order); err != nil {
 				return err
 			}
-			// log(k.cip, fmt.Sprintf("tables[\"%s\"].handlePageData called with %d records", k.job.table.name, len(contract)))
 			k.recs = int64(len(order))
-			k.ins.Reset()
 			k.ins.Grow(len(order) * 120)
-			k.upd.Reset()
 			k.upd.Grow(len(order) * 120)
-			k.ids.Reset()
 			k.ids.Grow(len(order) * 10)
 			inscomma := ""
 			updcomma := ""

@@ -22,11 +22,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 var kjobStack = make(map[int]*kjob, 4096)
-var kjobStackMutex debugOnlyMutex
+var kjobStackMutex sync.Mutex
 var kjobQueueLen int
 var kjobQueueTick *time.Ticker
 var joblog *sql.Stmt
@@ -164,7 +165,7 @@ type kjob struct {
 	heart    *time.Timer   //heartbeat timer
 	req      *http.Request //http request
 	running  bool
-	jobMutex debugOnlyMutex
+	jobMutex sync.Mutex
 	page     map[uint16]*kpage // hashmap of [pagenumber]*kpage for all child elements
 	table    *table
 	sqldata  map[uint64]uint64

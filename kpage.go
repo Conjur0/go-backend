@@ -17,12 +17,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 var kpageQueue *kpageQueueS
 var kpageQueueTick *time.Ticker
-var kpageQueueMutex debugOnlyMutex
+var kpageQueueMutex sync.Mutex
 
 var errorRemain uint32 = 100
 var errorResetTimer *time.Timer
@@ -35,7 +36,7 @@ var backoffTimer *time.Timer
 var curInFlight = 0
 var lastInFlight = 0
 var inFlight = make(map[int]*kpage, c.MaxInFlight)
-var inFlightMutex debugOnlyMutex
+var inFlightMutex sync.Mutex
 var pagesFired = 0
 var lastFired = 0
 
@@ -57,7 +58,7 @@ type kpage struct {
 	req       *http.Request
 	running   int64
 	dead      bool
-	pageMutex debugOnlyMutex
+	pageMutex sync.Mutex
 	ids       strings.Builder
 	ins       strings.Builder
 	upd       strings.Builder

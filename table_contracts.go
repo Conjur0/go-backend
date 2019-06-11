@@ -152,28 +152,24 @@ func tablesInitcontracts() {
 				return err
 			}
 			k.recs = int64(len(contract))
-			k.ins.Reset()
 			k.ins.Grow(len(contract) * 256)
-			k.upd.Reset()
 			k.upd.Grow(len(contract) * 256)
-			k.ids.Reset()
 			k.ids.Grow(len(contract) * 10)
 			inscomma := ""
 			updcomma := ""
 			idscomma := ""
 
 			for it := range contract {
+				if contract[it].Status == "" {
+					contract[it].Status = "outstanding"
+				}
+				if contract[it].Availability == "" {
+					contract[it].Availability = "public"
+				}
 				fmt.Fprintf(&k.ids, "%s%d", idscomma, contract[it].ContractID)
 				idscomma = ","
 				if ord, ok := k.job.sqldata[uint64(contract[it].ContractID)]; ok {
-
 					if ord != contractStatus[contract[it].Status.ifnull()] {
-						if contract[it].Status == "" {
-							contract[it].Status = "outstanding"
-						}
-						if contract[it].Availability == "" {
-							contract[it].Availability = "public"
-						}
 						fmt.Fprintf(&k.upd, "%s(%s,%s,%d,%d,%s,%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,%s,%s,%s,%f)", updcomma, k.job.Source, k.job.Owner, contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability.ifnull(), contract[it].Buyout, contract[it].Collateral, contract[it].ContractID, contract[it].DateAccepted.toSQLDate(), contract[it].DateCompleted.toSQLDate(), contract[it].DateExpired.toSQLDate(), contract[it].DateIssued.toSQLDate(), contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(), contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward, contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
 						updcomma = ","
 						k.updrecs++
@@ -182,13 +178,6 @@ func tablesInitcontracts() {
 					}
 					delete(k.job.sqldata, uint64(contract[it].ContractID)) //remove matched items from the map
 				} else {
-
-					if contract[it].Status == "" {
-						contract[it].Status = "outstanding"
-					}
-					if contract[it].Availability == "" {
-						contract[it].Availability = "public"
-					}
 					fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,%s,%s,%s,%f)", inscomma, k.job.Source, k.job.Owner, contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability.ifnull(), contract[it].Buyout, contract[it].Collateral, contract[it].ContractID, contract[it].DateAccepted.toSQLDate(), contract[it].DateCompleted.toSQLDate(), contract[it].DateExpired.toSQLDate(), contract[it].DateIssued.toSQLDate(), contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(), contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward, contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
 					inscomma = ","
 					k.insrecs++

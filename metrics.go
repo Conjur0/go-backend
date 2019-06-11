@@ -1,10 +1,12 @@
 // Metrics
 package main
 
+import "sync"
+
 //globals
 var (
 	metrics      = make(map[string]int64)
-	metricsMutex debugOnlyMutex
+	metricsMutex sync.Mutex
 )
 
 //  addMetric(obj): adds a tag at the current time
