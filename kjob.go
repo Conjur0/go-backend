@@ -1,17 +1,4 @@
-//////////////////////////////////////////////////////////////////////////////////
-// kjob.go - ESI Job Management
-//////////////////////////////////////////////////////////////////////////////////
-//  kjobQueueInit():  Timer Init (called once from main)
-//  gokjobQueueTick(t):  Timer tick function
-//  newKjob(method, specnum, endpoint, entity, pages):  Initializes a new ESI Job, and adds it to the revolving door
-//  kjob.beat():  Zombie Hunter- goal is for this to never be called.
-//  kjob.print(string):  Universal "print all the things" function for debugging
-//  kjob.start():  Brings kjob out of hibernation
-//  kjob.stopJob():  Places kjob into hibernation
-//  kjob.run():  Performs the next step, to process kjob
-//  kjob.queuePages():  Adds all currently un-queued pages to the pages queue
-//  kjob.requestHead():  Pulls a HEAD for the page, to identify expiration and pagecount
-//  kjob.updateExp():  Centralized method for updating kjob expiration
+// ESI Job Management
 
 package main
 
@@ -26,92 +13,29 @@ import (
 	"time"
 )
 
-var kjobStack = make(map[int]*kjob, 4096)
-var kjobStackMutex sync.Mutex
-var kjobQueueLen int
-var kjobQueueTick *time.Ticker
+var (
+	kjobStack      = make(map[int]*kjob, 1024)
+	kjobStackMutex sync.Mutex
+	kjobQueueTick  *time.Ticker
+)
+
 var joblog *sql.Stmt
 
 type kjobQueueStruct struct {
 	elements chan kjob
 }
 
-// initialize kjob queue ticker
+//  initialize kjob
 func kjobInit() {
 	kjobQueueTick = time.NewTicker(500 * time.Millisecond) //500ms
 	go gokjobQueueTick()
-
-	tables["jobs"] = &table{
-		database:   "karkinos",
-		name:       "jobs",
-		primaryKey: "id",
-		uniqueKeys: map[string]string{
-			"msee": "method:spec:endpoint:entity",
-		},
-		_columnOrder: []string{
-			"method",
-			"spec",
-			"endpoint",
-			"entity",
-			"pages",
-			"`table`",
-			"nextrun",
-		},
-		proto: []string{
-			"id INT NOT NULL AUTO_INCREMENT",
-			"method VARCHAR(12) NOT NULL",
-			"spec VARCHAR(10) NOT NULL",
-			"endpoint VARCHAR(110) NOT NULL",
-			"entity VARCHAR(250) NOT NULL",
-			"pages TINYINT NOT NULL",
-			"`table` VARCHAR(12) NOT NULL",
-			"nextrun BIGINT NOT NULL",
-		},
-		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",
-	}
-
-	tables["job_log"] = &table{
-		database:   "karkinos",
-		name:       "job_log",
-		primaryKey: "id",
-		keys: map[string]string{
-			"job_id": "job_id",
-		},
-		_columnOrder: []string{
-			"`time`",
-			"job_id",
-			"`pages`",
-			"records",
-			"affected",
-			"removed",
-			"runtime",
-			"download",
-			"cache",
-		},
-		proto: []string{
-			"id BIGINT NOT NULL AUTO_INCREMENT",
-			"`time` BIGINT NOT NULL",
-			"`job_id` INT NOT NULL",
-			"`pages` SMALLINT NOT NULL",
-			"`records` INT NOT NULL",
-			"`affected` INT NOT NULL",
-			"`removed` INT NOT NULL",
-			"`runtime` INT NOT NULL",
-			"`download` INT NOT NULL",
-			"`cache` INT NOT NULL",
-		},
-		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",
-	}
-
-	log(nil, "kjob timer started")
-}
-func kjobQueryInit() {
 	var err error
-	joblog, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (?,?,?,?,?,?,?,?,?)", tables["job_log"].database, tables["job_log"].name, tables["job_log"].columnOrder()))
+	joblog, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (?,?,?,?,?,?,?,?,?)", c.Tables["job_log"].DB, c.Tables["job_log"].Name, c.Tables["job_log"].columnOrder()))
 	if err != nil {
 		log(nil, err)
 		panic(err)
 	}
+	log(nil, "kjob init complete")
 }
 
 func gokjobQueueTick() {
@@ -216,7 +140,7 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 		CI:       fmt.Sprintf("%s|%s", endpoint, ciString),
 		spec:     tspec,
 		page:     make(map[uint16]*kpage),
-		table:    tables[table]}
+		table:    c.Tables[table]}
 	for se, sed := range entity {
 		tmp.URL = strings.Replace(tmp.URL, "{"+se+"}", sed, -1)
 	}
@@ -227,8 +151,7 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 		}
 	}()
 	kjobStackMutex.Lock()
-	kjobStack[kjobQueueLen] = &tmp
-	kjobQueueLen++
+	kjobStack[len(kjobStack)] = &tmp
 	kjobStackMutex.Unlock()
 }
 

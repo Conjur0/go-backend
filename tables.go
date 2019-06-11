@@ -1,7 +1,5 @@
-//////////////////////////////////////////////////////////////////////////////////
-// tables.go - tables definitions
-//////////////////////////////////////////////////////////////////////////////////
-//
+// tables definitions
+
 package main
 
 import (
@@ -10,8 +8,6 @@ import (
 	"strings"
 	"time"
 )
-
-var tables = make(map[string]*table)
 
 type eveDate string
 
@@ -60,19 +56,19 @@ func (s sQLenum) ifnull() string {
 	return "'" + string(s) + "'"
 }
 
+// table definition
 type table struct {
-	database     string //Database Name
-	name         string //Table Name
-	primaryKey   string //(uint64)Primary BTREE Index (multiple fields separated with :)
-	changedKey   string //what to poll to see if the record needs to be updated (uint64)
-	jobKey       string
-	keys         map[string]string //Other Indexes (multiple fields separated with :)
-	uniqueKeys   map[string]string
-	_columnOrder []string
-	duplicates   string
-	proto        []string
-	tail         string
-
+	DB               string               `json:"db"`                    //Database Name
+	Name             string               `json:"name"`                  //Table Name
+	PrimaryKey       string               `json:"primary_key,omitempty"` //(uint64)Primary BTREE Index (multiple fields separated with :)
+	ChangedKey       string               `json:"changed_key,omitempty"` //what to poll to see if the record needs to be updated (uint64)
+	JobKey           string               `json:"job_key,omitempty"`     //what ties this row to the queried entity/source
+	Keys             map[string]string    `json:"keys,omitempty"`        //Other Indexes (multiple fields separated with :)
+	UniqueKeys       map[string]string    `json:"unique_keys,omitempty"` //Other other indexes (multiple fields separated with :)
+	ColumnOrder      []string             `json:"column_order,omitempty"`
+	Duplicates       string               `json:"duplicates,omitempty"`
+	Proto            []string             `json:"proto,omitempty"`
+	Tail             string               `json:"tail,omitempty"` //" ENGINE=InnoDB DEFAULT CHARSET=latin1;" appended to the end of the create table query
 	handleStart      func(k *kjob) error  //Called when job started
 	handlePageData   func(k *kpage) error //Called to process NEW (200) page data
 	handlePageCached func(k *kpage) error //Called to process OLD (304) page data
@@ -86,9 +82,9 @@ type table struct {
 func (t *table) columnOrder() string {
 	var b strings.Builder
 	comma := ""
-	for it := range t._columnOrder {
+	for it := range t.ColumnOrder {
 		b.WriteString(comma)
-		b.WriteString(t._columnOrder[it])
+		b.WriteString(t.ColumnOrder[it])
 		comma = ","
 	}
 	return b.String()
@@ -100,15 +96,15 @@ func (t *table) create() string {
 	comma := ""
 
 	//create part...
-	fmt.Fprintf(&b, "CREATE TABLE IF NOT EXISTS `%s`.`%s` (", t.database, t.name)
+	fmt.Fprintf(&b, "CREATE TABLE IF NOT EXISTS `%s`.`%s` (", t.DB, t.Name)
 	//fields
-	for it := range t.proto {
-		fmt.Fprintf(&b, "%s\n    %s", comma, t.proto[it])
+	for it := range t.Proto {
+		fmt.Fprintf(&b, "%s\n    %s", comma, t.Proto[it])
 		comma = ","
 	}
 
 	//primary key
-	prim := strings.Split(t.primaryKey, ":")
+	prim := strings.Split(t.PrimaryKey, ":")
 	if len(prim) > 0 {
 		comma := ""
 		b.WriteString(",\n    PRIMARY KEY (")
@@ -120,8 +116,8 @@ func (t *table) create() string {
 	}
 
 	//keys
-	for it := range t.keys {
-		k := strings.Split(t.keys[it], ":")
+	for it := range t.Keys {
+		k := strings.Split(t.Keys[it], ":")
 		comma := ""
 		fmt.Fprintf(&b, ",\n    KEY `%s`(", it)
 		for itt := range k {
@@ -132,8 +128,8 @@ func (t *table) create() string {
 	}
 
 	//unique keys
-	for it := range t.uniqueKeys {
-		k := strings.Split(t.uniqueKeys[it], ":")
+	for it := range t.UniqueKeys {
+		k := strings.Split(t.UniqueKeys[it], ":")
 		comma := ""
 		fmt.Fprintf(&b, ",\n    UNIQUE KEY `%s`(", it)
 		for itt := range k {
@@ -142,7 +138,7 @@ func (t *table) create() string {
 		}
 		b.WriteString(")")
 	}
-	fmt.Fprintf(&b, "\n)%s\n", t.tail)
+	fmt.Fprintf(&b, "\n)%s\n", t.Tail)
 	return b.String()
 }
 
@@ -150,8 +146,8 @@ func (t *table) create() string {
 func tablesInit() {
 	tablesInitorders()
 	tablesInitcontracts()
-	for it := range tables {
-		safeExec(tables[it].create())
+	for it := range c.Tables {
+		safeExec(c.Tables[it].create())
 		log(nil, fmt.Sprintf("Initialized table %s", it))
 	}
 	//log(nil, "Initialization Complete!")

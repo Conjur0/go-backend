@@ -8,32 +8,271 @@
     "user": "karkinos",
     "pass": "mypasswordissupersecret"
   },
-
   "oauth": {
     "Discord": {
-      "name": "Discord",
       "clientID": "ffff_SNIP_ffff",
       "clientSecret": "ffff_SNIP_ffff",
+      "authToken" : "ffff_ base64'd concat of clientID:clientSecret _ffff",
       "callback": "https://yourdomain.com/sso",
       "redirect": "https://yourdomain.com/",
       "authURL": "https://discordapp.com/oauth2/authorize/",
       "refererURL": "https://discordapp.com/oauth2/authorize/",
       "tokenURL": "https://discordapp.com/api/oauth2/token",
       "verifyURL": "https://discordapp.com/api/users/@me",
-      "revokeURL": "https://discordapp.com/api/oauth2/token/revoke"
+      "revokeURL": "https://discordapp.com/api/oauth2/token/revoke",
+      "apiBase" : "https://discordapp.com/api"
     },
     "CCP": {
-      "name": "CCP",
       "clientID": "ffff_SNIP_ffff",
       "clientSecret": "ffff_SNIP_ffff",
+      "authToken" : "ffff_ base64'd concat of clientID:clientSecret _ffff",
       "callback": "https://yourdomain.com/sso",
       "redirect": "https://yourdomain.com/",
       "authURL": "https://login.eveonline.com/oauth/authorize/",
       "refererURL": "https://login.eveonline.com/oauth/authorize/",
       "tokenURL": "https://login.eveonline.com/oauth/token",
       "verifyURL": "https://login.eveonline.com/oauth/verify",
-      "revokeURL": "https://login.eveonline.com/oauth/revoke"
+      "revokeURL": "https://login.eveonline.com/oauth/revoke",
+      "apiBase" : "https://esi.evetech.net"
+    }
+  },
+  "tables":{
+    "contracts": {
+      "db": "karkinos",
+      "name": "contracts",
+      "primary_key": "contract_id",
+      "changed_key": "status+0",
+      "job_key": "source",
+      "keys": {
+        "acceptor_id": "acceptor_id",
+        "assignee_id": "assignee_id",
+        "date_accepted_hour": "date_accepted_hour",
+        "date_completed_hour": "date_completed_hour",
+        "date_expired_hour": "date_expired_hour",
+        "date_issued_hour": "date_issued_hour",
+        "end_location_id": "end_location_id",
+        "issuer_corporation_id": "issuer_corporation_id",
+        "issuer_id": "issuer_id",
+        "owner": "owner",
+        "source": "source",
+        "start_location_id": "start_location_id",
+        "status": "status",
+        "type": "type"
+      },
+      "column_order": [
+        "source",
+        "owner",
+        "acceptor_id",
+        "assignee_id",
+        "availability",
+        "buyout",
+        "collateral",
+        "contract_id",
+        "date_accepted",
+        "date_completed",
+        "date_expired",
+        "date_issued",
+        "days_to_complete",
+        "end_location_id",
+        "for_corporation",
+        "issuer_corporation_id",
+        "issuer_id",
+        "price",
+        "reward",
+        "start_location_id",
+        "status",
+        "title",
+        "type",
+        "volume"
+      ],
+      "duplicates": "ON DUPLICATE KEY UPDATE acceptor_id=VALUES(acceptor_id),date_accepted=VALUES(date_accepted),date_completed=VALUES(date_completed),status=VALUES(status)",
+      "proto": [
+        "source bigint(20) NOT NULL",
+        "owner bigint(20) NULL",
+        "position int(11) NOT NULL DEFAULT -1000",
+        "acceptor_id bigint(20) DEFAULT NULL",
+        "assignee_id bigint(20) NOT NULL",
+        "availability enum('public','personal','corporation','alliance') DEFAULT NULL",
+        "buyout decimal(22,2) DEFAULT NULL",
+        "collateral decimal(22,2) DEFAULT NULL",
+        "contract_id bigint(20) NOT NULL",
+        "date_accepted bigint(20) DEFAULT NULL",
+        "date_accepted_hour int(11) GENERATED ALWAYS AS (floor(date_accepted / 3600000)) STORED",
+        "date_completed bigint(20) DEFAULT NULL",
+        "date_completed_hour int(11) GENERATED ALWAYS AS (floor(date_completed / 3600000)) STORED",
+        "date_expired bigint(20) NOT NULL",
+        "date_expired_hour int(11) GENERATED ALWAYS AS (floor(date_expired / 3600000)) STORED",
+        "date_issued bigint(20) NOT NULL",
+        "date_issued_hour int(11) GENERATED ALWAYS AS (floor(date_issued / 3600000)) STORED",
+        "days_to_complete int(11) DEFAULT NULL",
+        "end_location_id bigint(20) DEFAULT NULL",
+        "for_corporation tinyint(1) NOT NULL",
+        "issuer_corporation_id bigint(20) NOT NULL",
+        "issuer_id bigint(20) NOT NULL",
+        "price decimal(22,2) DEFAULT NULL",
+        "reward decimal(22,2) DEFAULT NULL",
+        "start_location_id bigint(20) DEFAULT NULL",
+        "status enum('outstanding','in_progress','finished_issuer','finished_contractor','finished','cancelled','rejected','failed','deleted','reversed','expired') NOT NULL",
+        "title tinytext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL",
+        "type enum('unknown','item_exchange','auction','courier','loan') NOT NULL",
+        "volume decimal(22,3) DEFAULT NULL",
+        "created timestamp NOT NULL DEFAULT current_timestamp()",
+        "last_update timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()"
+      ],
+      "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+    },
+    "etag": {
+      "db": "karkinos",
+      "name": "etag",
+      "primary_key": "cip",
+      "keys": {
+        "etag": "etag"
+      },
+      "column_order": [
+        "cip",
+        "etag",
+        "ids",
+        "len"
+      ],
+      "duplicates": "ON DUPLICATE KEY UPDATE etag=VALUES(etag)",
+      "proto": [
+        "cip varchar(250) NOT NULL",
+        "etag varchar(250) NOT NULL",
+        "ids mediumtext NOT NULL",
+        "len int(11) DEFAULT NULL"
+      ],
+      "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+    },
+    "job_log": {
+      "db": "karkinos",
+      "name": "job_log",
+      "primary_key": "id",
+      "keys": {
+        "job_id": "job_id"
+      },
+      "column_order": [
+        "`time`",
+        "job_id",
+        "`pages`",
+        "records",
+        "affected",
+        "removed",
+        "runtime",
+        "download",
+        "cache"
+      ],
+      "proto": [
+        "id BIGINT NOT NULL AUTO_INCREMENT",
+        "`time` BIGINT NOT NULL",
+        "`job_id` INT NOT NULL",
+        "`pages` SMALLINT NOT NULL",
+        "`records` INT NOT NULL",
+        "`affected` INT NOT NULL",
+        "`removed` INT NOT NULL",
+        "`runtime` INT NOT NULL",
+        "`download` INT NOT NULL",
+        "`cache` INT NOT NULL"
+      ],
+      "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+    },
+    "jobs": {
+      "db": "karkinos",
+      "name": "jobs",
+      "primary_key": "id",
+      "unique_keys": {
+        "msee": "method:spec:endpoint:entity"
+      },
+      "column_order": [
+        "method",
+        "spec",
+        "endpoint",
+        "entity",
+        "pages",
+        "`table`",
+        "nextrun"
+      ],
+      "proto": [
+        "id INT NOT NULL AUTO_INCREMENT",
+        "method VARCHAR(12) NOT NULL",
+        "spec VARCHAR(10) NOT NULL",
+        "endpoint VARCHAR(110) NOT NULL",
+        "entity VARCHAR(250) NOT NULL",
+        "pages TINYINT NOT NULL",
+        "`table` VARCHAR(12) NOT NULL",
+        "nextrun BIGINT NOT NULL"
+      ],
+      "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+    },
+    "orders": {
+      "db": "karkinos",
+      "name": "orders",
+      "primary_key": "order_id",
+      "changed_key": "issued",
+      "job_key": "source",
+      "keys": {
+        "is_buy_order": "is_buy_order",
+        "location_id": "location_id",
+        "owner": "owner",
+        "source": "source",
+        "type_id": "type_id"
+      },
+      "column_order": [
+        "source",
+        "owner",
+        "duration",
+        "is_buy_order",
+        "issued",
+        "location_id",
+        "min_volume",
+        "order_id",
+        "price",
+        "`range`",
+        "type_id",
+        "volume_remain",
+        "volume_total"
+      ],
+      "duplicates": "ON DUPLICATE KEY UPDATE source=IF(ISNULL(VALUES(owner)),VALUES(source),source),owner=IF(ISNULL(VALUES(owner)),owner,VALUES(owner)),issued=VALUES(issued),price=VALUES(price),volume_remain=VALUES(volume_remain)",
+      "proto": [
+        "source bigint(20) NOT NULL",
+        "owner bigint(20) NULL",
+        "duration int(4) NOT NULL",
+        "is_buy_order tinyint(1) NOT NULL",
+        "issued bigint(20) NOT NULL",
+        "location_id bigint(20) NOT NULL",
+        "min_volume int(11) NOT NULL",
+        "order_id bigint(20) NOT NULL",
+        "price decimal(22,2) NOT NULL",
+        "`range` enum('station','region','solarsystem','1','2','3','4','5','10','20','30','40')",
+        "type_id int(11) NOT NULL",
+        "volume_remain bigint(20) NOT NULL",
+        "volume_total bigint(20) NOT NULL"
+      ],
+      "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
+    },
+    "spec": {
+      "db": "karkinos",
+      "name": "spec",
+      "primary_key": "method:spec:endpoint",
+      "column_order": [
+        "method",
+        "spec",
+        "endpoint",
+        "security",
+        "cache",
+        "items",
+        "paged"
+      ],
+      "proto": [
+        "method VARCHAR(12) NOT NULL",
+        "spec VARCHAR(10) NOT NULL",
+        "endpoint VARCHAR(110) NOT NULL",
+        "security VARCHAR(110) NOT NULL",
+        "cache INT NOT NULL",
+        "items INT NOT NULL",
+        "paged TINYINT NOT NULL"
+      ],
+      "tail": " ENGINE=InnoDB DEFAULT CHARSET=latin1;"
     }
   }
+  
 }
-

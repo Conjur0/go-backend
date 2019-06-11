@@ -77,13 +77,14 @@ func initClient() {
 }
 
 type conf struct {
-	EsiURL      string           `json:"esi_url"`
-	Domain      string           `json:"domain"`
-	Email       string           `json:"email"`
-	MaxInFlight uint64           `json:"max_in_flight"`
-	MinCachePct float64          `json:"min_cache_pct"`
-	Mariadb     mariadb          `json:"mariadb"`
-	Oauth       map[string]oauth `json:"oauth"`
+	EsiURL      string            `json:"esi_url"`
+	Domain      string            `json:"domain"`
+	Email       string            `json:"email"`
+	MaxInFlight uint64            `json:"max_in_flight"`
+	MinCachePct float64           `json:"min_cache_pct"`
+	Mariadb     mariadb           `json:"mariadb"`
+	Oauth       map[string]oauth  `json:"oauth"`
+	Tables      map[string]*table `json:"tables"`
 }
 
 type mariadb struct {

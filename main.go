@@ -16,15 +16,12 @@ var runningID = 0
 func main() {
 	log(nil, "Hello World!")
 	initConfig()
-	initClient()
 	sqlInit()
-	specInit()
+	tablesInit()
+	initClient()
 	kjobInit()
 	kpageInit()
-	etagTableInit()
-	tablesInit()
-	etagQueryInit()
-	kjobQueryInit()
+	etagInit()
 
 	tock := time.NewTimer(3 * time.Second) // 3s
 	go func() {

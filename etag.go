@@ -22,54 +22,29 @@ var getetagids *sql.Stmt
 var setetag *sql.Stmt
 var killetag *sql.Stmt
 
-// initialize etag table definition
-func etagTableInit() {
-	tables["etag"] = &table{
-		database:   "karkinos",
-		name:       "etag",
-		primaryKey: "cip",
-		keys: map[string]string{
-			"etag": "etag",
-		},
-		_columnOrder: []string{
-			"cip",
-			"etag",
-			"ids",
-			"len",
-		},
-		duplicates: "ON DUPLICATE KEY UPDATE etag=VALUES(etag)",
-		proto: []string{
-			"cip varchar(250) NOT NULL",
-			"etag varchar(250) NOT NULL",
-			"ids mediumtext NOT NULL",
-			"len int(11) DEFAULT NULL",
-		},
-		tail: " ENGINE=InnoDB DEFAULT CHARSET=latin1;",
-	}
-}
-
 // initialize eTag prepared queries
-func etagQueryInit() {
+func etagInit() {
 	var err error
-	getetag, err = database.Prepare(fmt.Sprintf("SELECT etag FROM `%s`.`%s` WHERE cip = ? LIMIT 1", tables["etag"].database, tables["etag"].name))
+	table := c.Tables["etag"]
+	getetag, err = database.Prepare(fmt.Sprintf("SELECT etag FROM `%s`.`%s` WHERE cip = ? LIMIT 1", table.DB, table.Name))
 	if err != nil {
 		log(nil, err)
 		panic(err)
 	}
 
-	getetagids, err = database.Prepare(fmt.Sprintf("SELECT ids,len FROM `%s`.`%s` WHERE cip = ? LIMIT 1", tables["etag"].database, tables["etag"].name))
+	getetagids, err = database.Prepare(fmt.Sprintf("SELECT ids,len FROM `%s`.`%s` WHERE cip = ? LIMIT 1", table.DB, table.Name))
 	if err != nil {
 		log(nil, err)
 		panic(err)
 	}
 
-	setetag, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (cip,etag,ids,len) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE etag=VALUES(etag),ids=VALUES(ids),len=VALUES(len)", tables["etag"].database, tables["etag"].name))
+	setetag, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (cip,etag,ids,len) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE etag=VALUES(etag),ids=VALUES(ids),len=VALUES(len)", table.DB, table.Name))
 	if err != nil {
 		log(nil, err)
 		panic(err)
 	}
 
-	killetag, err = database.Prepare(fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE cip=?", tables["etag"].database, tables["etag"].name))
+	killetag, err = database.Prepare(fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE cip=?", table.DB, table.Name))
 	if err != nil {
 		log(nil, err)
 		panic(err)
