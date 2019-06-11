@@ -65,6 +65,9 @@ type kpage struct {
 	recs      int64
 	insrecs   int64
 	updrecs   int64
+	inscomma  string
+	updcomma  string
+	idscomma  string
 }
 
 func (kpageQueueS *kpageQueueS) Push(element *kpage) {

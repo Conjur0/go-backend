@@ -30,17 +30,8 @@ type order struct {
 
 func tablesInitorders() {
 	c.Tables["orders"].handleStart = func(k *kjob) error { //jobMutex is already locked for us.
-		res := safeQuery(fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` WHERE %s=%s", k.table.DB, k.table.Name, k.table.JobKey, k.Source))
-		defer res.Close()
-		if !res.Next() {
-			k.sqldata = make(map[uint64]uint64)
-			return nil
-		}
-		var numRecords int
-		res.Scan(&numRecords)
+		numRecords, ress := k.table.getAllData(k.Source)
 		k.sqldata = make(map[uint64]uint64, numRecords)
-
-		ress := safeQuery(fmt.Sprintf("SELECT %s,%s FROM `%s`.`%s` WHERE %s=%s", k.table.PrimaryKey, k.table.ChangedKey, k.table.DB, k.table.Name, k.table.JobKey, k.Source))
 		defer ress.Close()
 		var key, data uint64
 		for ress.Next() {
@@ -60,25 +51,22 @@ func tablesInitorders() {
 		k.ins.Grow(len(order) * 120)
 		k.upd.Grow(len(order) * 120)
 		k.ids.Grow(len(order) * 10)
-		inscomma := ""
-		updcomma := ""
-		idscomma := ""
 
 		for it := range order {
-			fmt.Fprintf(&k.ids, "%s%d", idscomma, order[it].OrderID)
-			idscomma = ","
+			fmt.Fprintf(&k.ids, "%s%d", k.idscomma, order[it].OrderID)
+			k.idscomma = ","
 			if ord, ok := k.job.sqldata[uint64(order[it].OrderID)]; ok {
 				if ord != order[it].Issued.toktime() {
-					fmt.Fprintf(&k.upd, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", updcomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
-					updcomma = ","
+					fmt.Fprintf(&k.upd, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", k.updcomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
+					k.updcomma = ","
 					k.updrecs++
 				} else {
 					// exists in database and order has not changed, no-op
 				}
 				delete(k.job.sqldata, uint64(order[it].OrderID)) //remove matched items from the map
 			} else {
-				fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", inscomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
-				inscomma = ","
+				fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", k.inscomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
+				k.inscomma = ","
 				k.insrecs++
 			}
 

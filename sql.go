@@ -117,3 +117,25 @@ Again:
 		}
 	}
 }
+func safePrepare(query string) *sql.Stmt {
+	var tries int
+PrepareAgain:
+	statement, err := database.Prepare(query)
+	if err != nil {
+		var logquery string
+		if len(query) > 505 {
+			logquery = query[:250] + " ... " + query[len(query)-250:]
+		} else {
+			logquery = query
+		}
+		log(nil, err)
+		log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
+		tries++
+		if tries < 11 {
+			time.Sleep(1 * time.Second)
+			goto PrepareAgain
+		}
+		panic(query)
+	}
+	return statement
+}

@@ -20,6 +20,7 @@ var (
 )
 
 var joblog *sql.Stmt
+var jobrun *sql.Stmt
 
 type kjobQueueStruct struct {
 	elements chan kjob
@@ -31,6 +32,11 @@ func kjobInit() {
 	go gokjobQueueTick()
 	var err error
 	joblog, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (?,?,?,?,?,?,?,?,?)", c.Tables["job_log"].DB, c.Tables["job_log"].Name, c.Tables["job_log"].columnOrder()))
+	if err != nil {
+		log(nil, err)
+		panic(err)
+	}
+	jobrun, err = database.Prepare(fmt.Sprintf("UPDATE `%s`.`%s` SET nextRun=? WHERE id=?", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
 	if err != nil {
 		log(nil, err)
 		panic(err)
@@ -49,6 +55,53 @@ func gokjobQueueTick() {
 		}
 		kjobStackMutex.Unlock()
 	}
+}
+
+func createJob(method string, specnum string, endpoint string, ciString string, pages uint16, table string, nextRun int64) int {
+	stmt := safePrepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES(?,?,?,?,?,?,?)", c.Tables["jobs"].DB, c.Tables["jobs"].Name, c.Tables["jobs"].columnOrder()))
+
+	res, err := stmt.Exec(method, specnum, endpoint, ciString, pages, table, nextRun)
+	if err != nil {
+		log(nil, err)
+		return -1
+	}
+	aff, err := res.RowsAffected()
+	if err != nil {
+		log(nil, err)
+		return -1
+	}
+	if aff < 1 {
+		log(nil, fmt.Sprintf("no rows inserted"))
+		return -1
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		log(nil, err)
+		return -1
+	}
+	newKjob(int(id), method, specnum, endpoint, ciString, pages, table, nextRun)
+	return int(id)
+
+}
+
+func getJobs() {
+	stmt := safeQuery(fmt.Sprintf("SELECT id,method,spec,endpoint,entity,pages,`table`,nextrun FROM `%s`.`%s` ORDER BY id", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
+	defer stmt.Close()
+	//(id int, method string, specnum string, endpoint string, ciString string, pages uint16, table string, nextRun int64
+	var (
+		id                                         int
+		method, specnum, endpoint, ciString, table string
+		pages                                      uint16
+		nextRun                                    int64
+	)
+	var iter int64
+	stime := ktime()
+	for stmt.Next() {
+		stmt.Scan(&id, &method, &specnum, &endpoint, &ciString, &pages, &table, &nextRun)
+		newKjob(id, method, specnum, endpoint, ciString, pages, table, max((iter*175)+stime, nextRun))
+		iter++
+	}
+
 }
 
 type kjob struct {
@@ -95,7 +148,7 @@ type kjob struct {
 	sqldata  map[uint64]uint64
 }
 
-func newKjob(id int, method string, specnum string, endpoint string, ciString string, pages uint16, table string) {
+func newKjob(id int, method string, specnum string, endpoint string, ciString string, pages uint16, table string, nextRun int64) {
 	tspec := getSpec(method, specnum, endpoint)
 	if tspec.invalid {
 		log(nil, "Invalid job received: SPEC invalid")
@@ -140,7 +193,9 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 		CI:       fmt.Sprintf("%s|%s", endpoint, ciString),
 		spec:     tspec,
 		page:     make(map[uint16]*kpage),
-		table:    c.Tables[table]}
+		table:    c.Tables[table],
+		NextRun:  nextRun,
+	}
 	for se, sed := range entity {
 		tmp.URL = strings.Replace(tmp.URL, "{"+se+"}", sed, -1)
 	}
@@ -150,6 +205,7 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 			tmp.beat()
 		}
 	}()
+	//log(nil, fmt.Sprintf("%s queued for %dms", tmp.CI, tmp.NextRun-ktime()))
 	kjobStackMutex.Lock()
 	kjobStack[len(kjobStack)] = &tmp
 	kjobStackMutex.Unlock()
@@ -183,6 +239,7 @@ func (k *kjob) stopJob(failed bool) {
 	} else {
 		k.RemovedRows += k.table.handleEndGood(k)
 		joblog.Exec(ktime(), k.id, k.PagesProcessed, k.Records, k.AffectedRows, k.RemovedRows, getMetric(k.CI), k.BytesDownloaded.Get(), k.BytesCached.Get())
+		jobrun.Exec(k.NextRun, k.id)
 	}
 	k.heart.Stop()
 	for it := range k.page {

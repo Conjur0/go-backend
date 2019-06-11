@@ -3,6 +3,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -140,6 +141,18 @@ func (t *table) create() string {
 	}
 	fmt.Fprintf(&b, "\n)%s\n", t.Tail)
 	return b.String()
+}
+
+func (t *table) getAllData(source string) (int, *sql.Rows) {
+	where := ""
+	if len(t.JobKey) > 0 {
+		where = fmt.Sprintf(" WHERE %s=%s", t.JobKey, source)
+	}
+	res := safeQuery(fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`%s", t.DB, t.Name, where))
+	defer res.Close()
+	var numRecords int
+	res.Scan(&numRecords)
+	return numRecords, safeQuery(fmt.Sprintf("SELECT %s,%s FROM `%s`.`%s`%s", t.PrimaryKey, t.ChangedKey, t.DB, t.Name, where))
 }
 
 // call table_*.go init functions, create tables if needed
