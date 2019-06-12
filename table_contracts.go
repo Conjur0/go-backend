@@ -6,7 +6,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -57,6 +56,7 @@ func tablesInitcontracts() {
 		k.job.jobMutex.Lock()
 		var contract contracts
 		if err := json.Unmarshal(k.body, &contract); err != nil {
+			log(nil, k.body)
 			return err
 		}
 		k.recs = int64(len(contract))
@@ -107,7 +107,7 @@ func tablesInitcontracts() {
 				delete(k.job.sqldata, uint64(contractID)) //remove matched items from the map
 				contractspurged++
 			} else {
-				return errors.New("etag data does not match table")
+				// return fmt.Errorf("etag data does not match table %d not found in table", contractID)
 			}
 
 		}

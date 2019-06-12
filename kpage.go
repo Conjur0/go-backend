@@ -12,6 +12,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -29,7 +30,7 @@ var errorResetTimer *time.Timer
 var backoffTimer *time.Timer
 
 var backoff = false
-var queueTicker *time.Ticker
+var queueTicker *time.Timer
 
 var curInFlight metric
 var lastInFlight uint64
@@ -55,6 +56,7 @@ type kpage struct {
 	cip       string
 	body      []byte
 	req       *http.Request
+	resp      *http.Response
 	running   int64
 	dead      bool
 	pageMutex sync.Mutex
@@ -105,8 +107,6 @@ func gokpageQueueTick() {
 				inFlight[err].running = ctime.UnixNano() / int64(time.Millisecond)
 				go inFlight[err].requestPage()
 				inFlightMutex.Unlock()
-			} else {
-				// log("kpage.go:gokpageQueueTick()", fmt.Sprintf("Encountered dead cip in queue %s", qitem.cip))
 			}
 		}
 	}
@@ -120,7 +120,6 @@ func backoffReset() {
 func errorReset() {
 	for range errorResetTimer.C {
 		errorRemain.Set(100)
-		log(nil, "errorReset restored to 100")
 	}
 }
 
@@ -138,7 +137,7 @@ func kpageInit() {
 		inFlight[i] = &kpage{dead: true}
 	}
 
-	queueTicker = time.NewTicker(1 * time.Minute)
+	queueTicker = time.NewTimer(5 * time.Second)
 	go queueLog()
 
 	backoffTimer = time.NewTimer(time.Second * 60 * 60 * 24 * 365) // 1 year.
@@ -151,7 +150,7 @@ func kpageInit() {
 
 func queueLog() {
 	for range queueTicker.C {
-		if kpageQueue.len.Get() > 0 || lastFinished != pagesFinished.Get() || lastFired != pagesFired.Get() || lastInFlight != curInFlight.Get() {
+		if !backoff && (kpageQueue.len.Get() > 0 || lastFinished != pagesFinished.Get() || lastFired != pagesFired.Get() || lastInFlight != curInFlight.Get()) {
 			timenow := ktime()
 			lastFinished = pagesFinished.Get()
 			lastFired = pagesFired.Get()
@@ -169,6 +168,30 @@ func queueLog() {
 			inFlightMutex.Unlock()
 			log("<QUEUE>", b.String())
 		}
+		// pctfull := uint8(100 * (float64(lastInFlight) / float64(c.MaxInFlight)))
+		queueTicker.Reset(125 * time.Millisecond)
+
+		// if pctfull > 90 {
+		// 	queueTicker.Reset(125 * time.Millisecond)
+		// } else if pctfull > 80 {
+		// 	queueTicker.Reset(250 * time.Millisecond)
+		// } else if pctfull > 70 {
+		// 	queueTicker.Reset(500 * time.Millisecond)
+		// } else if pctfull > 60 {
+		// 	queueTicker.Reset(500 * time.Millisecond)
+		// } else if pctfull > 50 {
+		// 	queueTicker.Reset(1 * time.Second)
+		// } else if pctfull > 40 {
+		// 	queueTicker.Reset(1 * time.Second)
+		// } else if pctfull > 30 {
+		// 	queueTicker.Reset(2 * time.Second)
+		// } else if pctfull > 20 {
+		// 	queueTicker.Reset(2 * time.Second)
+		// } else if pctfull > 10 {
+		// 	queueTicker.Reset(4 * time.Second)
+		// } else {
+		// 	queueTicker.Reset(4 * time.Second)
+		// }
 	}
 }
 
@@ -216,34 +239,56 @@ func (k *kpage) requestPage() {
 		k.job.stopJob(true)
 		return
 	}
-
+	k.req.Header.Add("Accept-Encoding", "gzip")
 	etaghdr := getEtag(k.cip)
 	if len(etaghdr) > 0 {
 		k.req.Header.Add("If-None-Match", etaghdr)
 	}
-	if k.job.spec.security != "" && len(k.job.Token) > 5 {
-		k.req.Header.Add("Authorization", "Bearer "+k.job.Token)
+	if k.job.spec.security != "" {
+		k.req.Header.Add("Authorization", "Bearer "+getAccessToken(k.job.TokenID, k.job.spec.security))
 	}
-	resp, err := client.Do(k.req)
+	k.resp, err = client.Do(k.req)
 	if err != nil {
 		log(k.cip, err)
 		k.job.newPage(k.page, true)
 		return
 	}
 
-	defer resp.Body.Close()
-	if k.dead {
-		return
-	}
+	defer k.resp.Body.Close()
+	// ce := ""
+	if a, ok := k.resp.Header["Content-Encoding"]; ok {
+		// ce = a[0]
+		if a[0] == "gzip" {
+			re, err := gzip.NewReader(k.resp.Body)
+			if err != nil {
+				log(k.cip, err)
+				k.job.newPage(k.page, true)
+				return
+			}
+			k.body, err = ioutil.ReadAll(re)
+			if err != nil {
+				log(k.cip, err)
+				k.job.newPage(k.page, true)
+				return
+			}
+			// log(k.cip, fmt.Sprintf("got Proto:%s Status:%s Content-Length:%d TransferEncoding:%v Uncompressed:%t Content-Encoding:%s len:%d", k.resp.Proto, k.resp.Status, k.resp.ContentLength, k.resp.TransferEncoding, k.resp.Uncompressed, ce, len(k.body)))
 
-	if resp.StatusCode == 200 {
-		var err error
-		k.body, err = ioutil.ReadAll(resp.Body)
+		}
+	} else {
+		k.body, err = ioutil.ReadAll(k.resp.Body)
 		if err != nil {
 			log(k.cip, err)
 			k.job.newPage(k.page, true)
 			return
 		}
+	}
+
+	if k.dead {
+		return
+	}
+
+	if k.resp.StatusCode == 200 {
+		var err error
 		if err = k.job.table.handlePageData(k); err != nil {
 			log(k.cip, err)
 			k.job.newPage(k.page, true)
@@ -270,12 +315,12 @@ func (k *kpage) requestPage() {
 		k.job.jobMutex.Unlock()
 		k.pageMutex.Unlock()
 
-		if etag, ok := resp.Header["Etag"]; ok {
+		if etag, ok := k.resp.Header["Etag"]; ok {
 			setEtag(k.cip, etag[0], k.ids.String(), len(k.body))
 		}
 		bDownload.Add(uint64(len(k.body)))
 		k.job.BytesDownloaded.Add(uint64(len(k.body)))
-	} else if resp.StatusCode == 304 {
+	} else if k.resp.StatusCode == 304 {
 		ids, length := getEtagIds(k.cip)
 		if length == 0 {
 			killEtag(k.cip)
@@ -296,11 +341,11 @@ func (k *kpage) requestPage() {
 		k.job.BytesCached.Add(uint64(length))
 	}
 
-	if resp.StatusCode == 200 || resp.StatusCode == 304 {
-		if exp, ok := resp.Header["Expires"]; ok {
+	if k.resp.StatusCode == 200 || k.resp.StatusCode == 304 {
+		if exp, ok := k.resp.Header["Expires"]; ok {
 			k.job.updateExp(exp[0])
 		}
-		if pgs, ok := resp.Header["X-Pages"]; ok {
+		if pgs, ok := k.resp.Header["X-Pages"]; ok {
 			k.job.updatePageCount(pgs[0])
 		}
 
@@ -313,27 +358,41 @@ func (k *kpage) requestPage() {
 
 		k.job.processPage()
 	} else {
-		log(k.cip, fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db", resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body)))
-		k.job.newPage(k.page, true)
-		processBackoff(resp.Header)
-		//extract headers
+		log(k.cip, fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db", k.resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body)))
+		if processBackoff(k.resp.Header, k.job) {
+			k.job.newPage(k.page, true)
+		}
 	}
 
 }
-func processBackoff(hdr http.Header) {
-	errorlimitremain, okerrorlimitremain := hdr["x-esi-error-limit-remain"]
-	errorlimitreset, okerrorlimitreset := hdr["x-esi-error-limit-reset"]
+func processBackoff(hdr http.Header, k *kjob) (enabled bool) {
+	errorlimitremain, okerrorlimitremain := hdr["X-Esi-Error-Limit-Remain"]
+	errorlimitreset, okerrorlimitreset := hdr["X-Esi-Error-Limit-Reset"]
 	if okerrorlimitremain && okerrorlimitreset {
+		k.SeqErrors++
+		log(nil, fmt.Sprintf("Processing %s:%t/%s:%t Errors%d", errorlimitremain, okerrorlimitremain, errorlimitreset, okerrorlimitreset, k.SeqErrors))
 		errt, _ := strconv.Atoi(errorlimitreset[0])
 		errr, _ := strconv.Atoi(errorlimitremain[0])
 		errorRemain.Set(uint64(errr))
 		errorResetTimer.Reset(time.Duration(errt) * time.Second)
-		log(nil, fmt.Sprintf("errorRemain set to %d, Timer enqueued for %ds", errr, errt))
-		if errr < 100 {
+		if errr <= c.BackoffThreshold {
 			backoff = true
-			backoffTimer.Reset(30 * time.Second)
-			log(nil, "backing off for 30 seconds")
+			backoffTimer.Reset(c.BackoffSeconds * time.Second)
+			log(nil, fmt.Sprintf("backing off for %d seconds", c.BackoffSeconds))
 		}
-	}
+		if k.SeqErrors >= c.ErrDisableThreshold {
+			log(k.CI, "ERR_DISABLE")
+			stmt := safePrepare(fmt.Sprintf("UPDATE `%s`.`%s` set err_disabled=1 WHERE id=?", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
+			stmt.Exec(k.id)
+			k.stopJob(true)
+			kjobStackMutex.Lock()
+			delete(kjobStack, k.id)
+			kjobStackMutex.Unlock()
+			return false
+		}
+		k.heart.Reset(30 * time.Second)
+		time.Sleep(5 * time.Second)
 
+	}
+	return true
 }

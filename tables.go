@@ -61,7 +61,8 @@ func (s sQLenum) ifnull() string {
 type table struct {
 	DB               string               `json:"db"`                    //Database Name
 	Name             string               `json:"name"`                  //Table Name
-	PrimaryKey       string               `json:"primary_key,omitempty"` //(uint64)Primary BTREE Index (multiple fields separated with :)
+	PrimaryKey       string               `json:"primary_key,omitempty"` //Primary BTREE Index (multiple fields separated with :)
+	Changed          string               `json:"changed,omitempty"`     //what to poll to see if the record needs to be updated (uint64)
 	ChangedKey       string               `json:"changed_key,omitempty"` //what to poll to see if the record needs to be updated (uint64)
 	JobKey           string               `json:"job_key,omitempty"`     //what ties this row to the queried entity/source
 	Keys             map[string]string    `json:"keys,omitempty"`        //Other Indexes (multiple fields separated with :)
@@ -152,13 +153,14 @@ func (t *table) getAllData(source string) (int, *sql.Rows) {
 	defer res.Close()
 	var numRecords int
 	res.Scan(&numRecords)
-	return numRecords, safeQuery(fmt.Sprintf("SELECT %s,%s FROM `%s`.`%s`%s", t.PrimaryKey, t.ChangedKey, t.DB, t.Name, where))
+	return numRecords, safeQuery(fmt.Sprintf("SELECT %s,%s FROM `%s`.`%s`%s", t.Changed, t.ChangedKey, t.DB, t.Name, where))
 }
 
 // call table_*.go init functions, create tables if needed
 func tablesInit() {
 	tablesInitorders()
 	tablesInitcontracts()
+	tablesInitskills()
 	for it := range c.Tables {
 		safeExec(c.Tables[it].create())
 		log(nil, fmt.Sprintf("Initialized table %s", it))

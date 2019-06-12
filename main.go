@@ -17,6 +17,7 @@ func main() {
 	kjobInit()
 	kpageInit()
 	etagInit()
+	tokensInit()
 
 	getJobs()
 	// tock := time.NewTimer(3 * time.Second) // 3s

@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	kjobStack      = make(map[int]*kjob, 1024)
+	kjobStack      = make(map[int]*kjob, 4096)
 	kjobStackMutex sync.Mutex
 	kjobQueueTick  *time.Ticker
 )
@@ -85,7 +85,7 @@ func createJob(method string, specnum string, endpoint string, ciString string, 
 }
 
 func getJobs() {
-	stmt := safeQuery(fmt.Sprintf("SELECT id,method,spec,endpoint,entity,pages,`table`,nextrun FROM `%s`.`%s` ORDER BY id", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
+	stmt := safeQuery(fmt.Sprintf("SELECT id,method,spec,endpoint,entity,pages,`table`,nextrun FROM `%s`.`%s` WHERE err_disabled=0 ORDER BY id", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
 	defer stmt.Close()
 	//(id int, method string, specnum string, endpoint string, ciString string, pages uint16, table string, nextRun int64
 	var (
@@ -98,7 +98,7 @@ func getJobs() {
 	stime := ktime()
 	for stmt.Next() {
 		stmt.Scan(&id, &method, &specnum, &endpoint, &ciString, &pages, &table, &nextRun)
-		newKjob(id, method, specnum, endpoint, ciString, pages, table, max((iter*175)+stime, nextRun))
+		newKjob(id, method, specnum, endpoint, ciString, pages, table, max((iter*20)+stime, nextRun))
 		iter++
 	}
 
@@ -114,14 +114,14 @@ type kjob struct {
 	URL     string `json:"url"` //URL: concat of Spec and Endpoint, with entity processed
 	CI      string `json:"ci"`  //CI: concat of endpoint:JSON.Marshall(entity)
 	spec    specS
-	Token   string `json:"token"` //evesso access_token
-	TokenID string `json:"token_id"`
+	TokenID uint64 `json:"token_id"`
 	RunTag  int64  `json:"runTag"`
 
 	NextRun   int64 `json:"nextRun"`
 	Expires   int64 `json:"expires"`    //milliseconds since 1970, when cache miss will occur
 	ExpiresIn int64 `json:"expires_in"` //milliseconds until expiration, at completion of first page (or head) pulled
 
+	SeqErrors       int64           `json:"seq_errors"`
 	insJob          strings.Builder // builder of records pending insert
 	RecordsIns      int64           `json:"records_ins"`     // count of records pending insert
 	BytesDownloaded metric          `json:"bytesDownloaded"` //total bytes downloaded
@@ -177,15 +177,17 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 		owner = "NULL"
 	}
 
-	tokenid, _ = entity["token_id"]
-
+	tokenid, ok = entity["token_id"]
+	if !ok {
+		tokenid, _ = entity["character_id"]
+	}
+	tid, _ := strconv.Atoi(tokenid)
 	tmp := kjob{
 		id:       id,
 		Method:   method,
 		Source:   sentity,
 		Owner:    owner,
-		Token:    "none",
-		TokenID:  tokenid,
+		TokenID:  uint64(tid),
 		Pages:    pages,
 		PullType: pages,
 		URL:      fmt.Sprintf("%s%s?datasource=tranquility", specnum, endpoint),
@@ -207,7 +209,7 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 	}()
 	//log(nil, fmt.Sprintf("%s queued for %dms", tmp.CI, tmp.NextRun-ktime()))
 	kjobStackMutex.Lock()
-	kjobStack[len(kjobStack)] = &tmp
+	kjobStack[id] = &tmp
 	kjobStackMutex.Unlock()
 }
 
@@ -237,6 +239,7 @@ func (k *kjob) stopJob(failed bool) {
 	if failed {
 		k.table.handleEndFail(k)
 	} else {
+		k.SeqErrors = 0
 		k.RemovedRows += k.table.handleEndGood(k)
 		joblog.Exec(ktime(), k.id, k.PagesProcessed, k.Records, k.AffectedRows, k.RemovedRows, getMetric(k.CI), k.BytesDownloaded.Get(), k.BytesCached.Get())
 		jobrun.Exec(k.NextRun, k.id)
@@ -246,7 +249,6 @@ func (k *kjob) stopJob(failed bool) {
 		k.page[it].destroy()
 	}
 	k.running = false
-	k.Token = "none"
 	k.Expires = 0
 	k.Pages = k.PullType
 	k.PagesProcessed = 0
@@ -264,15 +266,11 @@ func (k *kjob) stopJob(failed bool) {
 	//defer runtime.GC()
 }
 func (k *kjob) run() {
-	//k.heart.Reset(30 * time.Second)
-	if k.spec.security != "" && len(k.Token) < 5 {
-		log(k.CI, "todo: get token.")
-		return
-	}
 	if k.Pages == 0 {
 		go k.requestHead()
 		return
 	}
+	go k.queuePages()
 }
 func (k *kjob) queuePages() {
 	k.jobMutex.Lock()
@@ -296,8 +294,8 @@ func (k *kjob) requestHead() {
 		return
 	}
 
-	if k.spec.security != "" && len(k.Token) > 5 {
-		k.req.Header.Add("Authorization", "Bearer "+k.Token)
+	if k.spec.security != "" {
+		k.req.Header.Add("Authorization", "Bearer "+getAccessToken(k.TokenID, k.spec.security))
 	}
 	resp, err := client.Do(k.req)
 	if err != nil {
@@ -321,9 +319,14 @@ func (k *kjob) requestHead() {
 		}
 		if pgs, ok := resp.Header["X-Pages"]; ok {
 			k.updatePageCount(pgs[0])
+		} else {
+			k.updatePageCount("1")
 		}
 	} else {
-		processBackoff(resp.Header)
+		log(k.CI, fmt.Sprintf("RCVD (%s) HEAD %s", resp.Status, k.URL))
+		if processBackoff(resp.Header, k) {
+			k.requestHead()
+		}
 	}
 }
 
@@ -360,19 +363,13 @@ func (k *kjob) processPage() {
 	k.jobMutex.Lock()
 	k.PagesProcessed++
 	pagesFinished.Inc()
-	//update last_seen on cached entries if
-	//  15000+ cached ids ready, or
-	//  non-zero cached ids ready, and this is the last page
-	if (k.updJob.Len() >= 250000) || ((k.updJob.Len() > 0) && k.PagesProcessed == k.Pages) {
+
+	if (k.updJob.Len() >= 50000) || ((k.updJob.Len() > 0) && k.PagesProcessed == k.Pages) {
 		k.AffectedRows += k.table.handleWriteUpd(k)
 		k.RecordsUpd = 0
 		k.updJob.Reset()
 	}
-
-	//insert records if:
-	//  15000+ records ready, or
-	//  non-zero records ready, and this is the last page
-	if (k.insJob.Len() >= 250000) || ((k.insJob.Len() > 0) && k.PagesProcessed == k.Pages) {
+	if (k.insJob.Len() >= 50000) || ((k.insJob.Len() > 0) && k.PagesProcessed == k.Pages) {
 		k.AffectedRows += k.table.handleWriteIns(k)
 		k.RecordsIns = 0
 		k.insJob.Reset()
