@@ -1,6 +1,5 @@
-//////////////////////////////////////////////////////////////////////////////////
-// sql.go - sql interface
-//////////////////////////////////////////////////////////////////////////////////
+// sql interface
+
 package main
 
 import (
@@ -17,12 +16,12 @@ var database *sql.DB
 func sqlInit() {
 	var err error
 
-	log(nil, "connect to SQL, user:"+c.Mariadb.User)
+	log("connect to SQL, user:" + c.Mariadb.User)
 	database, err = sql.Open("mysql", c.Mariadb.User+":"+c.Mariadb.Pass+"@tcp(127.0.0.1:3306)/?maxAllowedPacket=0")
 	if err != nil {
 		panic("Unable to connect to SQL!")
 	}
-	log(nil, "SQL init complete")
+	log("SQL init complete")
 
 }
 
@@ -39,8 +38,7 @@ Again:
 		} else {
 			logquery = query
 		}
-		log(nil, err)
-		log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
+		log(err, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
 		tries++
 		if tries < 11 {
 			time.Sleep(1 * time.Second)
@@ -56,8 +54,7 @@ Again:
 			} else {
 				logquery = query
 			}
-			log(nil, err)
-			log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
+			log(err, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
 			tries++
 			if tries < 11 {
 				time.Sleep(1 * time.Second)
@@ -67,7 +64,7 @@ Again:
 		} else {
 			aff, err := res.RowsAffected()
 			if err != nil {
-				log(nil, err)
+				log(err)
 				aff = 0
 			}
 			return aff
@@ -87,8 +84,7 @@ Again:
 		} else {
 			logquery = query
 		}
-		log(nil, err)
-		log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
+		log(err, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
 		tries++
 		if tries < 11 {
 			time.Sleep(5 * time.Second)
@@ -104,8 +100,7 @@ Again:
 			} else {
 				logquery = query
 			}
-			log(nil, err)
-			log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
+			log(err, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
 			tries++
 			if tries < 11 {
 				time.Sleep(5 * time.Second)
@@ -128,8 +123,7 @@ PrepareAgain:
 		} else {
 			logquery = query
 		}
-		log(nil, err)
-		log(nil, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
+		log(err, fmt.Sprintf("Query was: (%d)%s", len(query), logquery))
 		tries++
 		if tries < 11 {
 			time.Sleep(5 * time.Second)

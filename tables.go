@@ -163,7 +163,6 @@ func tablesInit() {
 	tablesInitskills()
 	for it := range c.Tables {
 		safeExec(c.Tables[it].create())
-		log(nil, fmt.Sprintf("Initialized table %s", it))
+		logf("Initialized table %s", it)
 	}
-	//log(nil, "Initialization Complete!")
 }

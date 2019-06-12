@@ -76,7 +76,7 @@ func decodeAuthToken(authToken string) (clientID string, clientSecret string) {
 func getAccessToken(characterID uint64, scope string) (accessToken string) {
 	tok, ok := tokens[characterID]
 	if !ok {
-		log(nil, fmt.Sprintf("no token data on file for %d", characterID))
+		logf("no token data on file for %d", characterID)
 		return ""
 	}
 	if len(scope) > 0 {
@@ -88,19 +88,19 @@ func getAccessToken(characterID uint64, scope string) (accessToken string) {
 			}
 		}
 		if !valid {
-			log(nil, fmt.Sprintf("token lacks required scope %d", characterID))
+			logf("token lacks required scope %d", characterID)
 			return ""
 		}
 	}
 	if tok.Expires > ktime() {
-		// log(nil, fmt.Sprintf("cached access_token returned for %d", characterID))
+		// logf("cached access_token returned for %d", characterID)
 		return tok.AccessToken
 	}
 	data := []byte(fmt.Sprintf("grant_type=refresh_token&refresh_token=%s", tok.RefreshToken))
 
 	req, err := http.NewRequest("POST", c.Oauth["CCP"].TokenURL, bytes.NewBuffer(data))
 	if err != nil {
-		log(nil, fmt.Sprintf("error creating request for %d", characterID))
+		logf("error creating request for %d", characterID)
 		return ""
 	}
 
@@ -110,22 +110,22 @@ func getAccessToken(characterID uint64, scope string) (accessToken string) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log(nil, fmt.Sprintf("error sending request for %d", characterID))
+		logf("error sending request for %d", characterID)
 		return ""
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		log(nil, fmt.Sprintf("error %s from CCP for %d", resp.Status, characterID))
+		logf("error %s from CCP for %d", resp.Status, characterID)
 		return ""
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log(nil, fmt.Sprintf("error reading request for %d", characterID))
+		logf("error reading request for %d", characterID)
 		return ""
 	}
 	var responseData tokenResponse
 	if err := json.Unmarshal(body, &responseData); err != nil {
-		log(nil, fmt.Sprintf("error Unmarshaling token for %d", characterID))
+		logf("error Unmarshaling token for %d", characterID)
 		return ""
 	}
 	tokens[characterID].AccessToken = responseData.AccessToken
@@ -134,27 +134,27 @@ func getAccessToken(characterID uint64, scope string) (accessToken string) {
 	defer stmt.Close()
 	res, err := stmt.Exec(tokens[characterID].AccessToken, tokens[characterID].Expires, characterID)
 	if err != nil {
-		log(nil, fmt.Sprintf("error updating SQL for %d", characterID))
+		logf("error updating SQL for %d", characterID)
 		return ""
 	}
 	aff, _ := res.RowsAffected()
 	if aff != 1 {
-		log(nil, fmt.Sprintf("error updating SQL for %d, no rows affected", characterID))
+		logf("error updating SQL for %d, no rows affected", characterID)
 		return ""
 	}
-	// log(nil, fmt.Sprintf("New token returned for %d", characterID))
+	// log( fmt.Sprintf("New token returned for %d", characterID))
 	return tokens[characterID].AccessToken
 }
 
 func verifyAccessToken(characterID uint64) {
 	token := getAccessToken(characterID, "")
 	if len(token) < 5 {
-		log(nil, "no token available")
+		log("no token available")
 		return
 	}
 	req, err := http.NewRequest("GET", c.Oauth["CCP"].VerifyURL, nil)
 	if err != nil {
-		log(nil, fmt.Sprintf("error creating request for %d", characterID))
+		logf("error creating request for %d", characterID)
 		return
 	}
 	req.Header.Set("User-Agent", "karkinos.ga, POC: Yonneh in #esi")
@@ -162,22 +162,22 @@ func verifyAccessToken(characterID uint64) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log(nil, fmt.Sprintf("error sending request for %d", characterID))
+		logf("error sending request for %d", characterID)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		log(nil, fmt.Sprintf("error %s from CCP for %d", resp.Status, characterID))
+		logf("error %s from CCP for %d", resp.Status, characterID)
 		return
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log(nil, fmt.Sprintf("error reading request for %d", characterID))
+		logf("error reading request for %d", characterID)
 		return
 	}
 	var responseData verifyResponse
 	if err := json.Unmarshal(body, &responseData); err != nil {
-		log(nil, fmt.Sprintf("error Unmarshaling verification for %d", characterID))
+		logf("error Unmarshaling verification for %d", characterID)
 		return
 	}
 	tokens[characterID].Scopes = strings.Split(responseData.Scopes, " ")
@@ -185,7 +185,7 @@ func verifyAccessToken(characterID uint64) {
 	defer stmt.Close()
 	_, err = stmt.Exec(responseData.CharacterName, responseData.Scopes, characterID)
 	if err != nil {
-		log(nil, fmt.Sprintf("error updating SQL for %d", characterID))
+		logf("error updating SQL for %d", characterID)
 		return
 	}
 	return

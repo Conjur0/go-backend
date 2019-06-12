@@ -28,20 +28,20 @@ type kjobQueueStruct struct {
 
 //  initialize kjob
 func kjobInit() {
-	kjobQueueTick = time.NewTicker(500 * time.Millisecond) //500ms
+	kjobQueueTick = time.NewTicker(500 * time.Millisecond)
 	go gokjobQueueTick()
 	var err error
 	joblog, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (?,?,?,?,?,?,?,?,?)", c.Tables["job_log"].DB, c.Tables["job_log"].Name, c.Tables["job_log"].columnOrder()))
 	if err != nil {
-		log(nil, err)
+		log(err)
 		panic(err)
 	}
 	jobrun, err = database.Prepare(fmt.Sprintf("UPDATE `%s`.`%s` SET nextRun=? WHERE id=?", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
 	if err != nil {
-		log(nil, err)
+		log(err)
 		panic(err)
 	}
-	log(nil, "kjob init complete")
+	log("kjob init complete")
 }
 
 func gokjobQueueTick() {
@@ -62,32 +62,30 @@ func createJob(method string, specnum string, endpoint string, ciString string, 
 
 	res, err := stmt.Exec(method, specnum, endpoint, ciString, pages, table, nextRun)
 	if err != nil {
-		log(nil, err)
+		log(err)
 		return -1
 	}
 	aff, err := res.RowsAffected()
 	if err != nil {
-		log(nil, err)
+		log(err)
 		return -1
 	}
 	if aff < 1 {
-		log(nil, fmt.Sprintf("no rows inserted"))
+		logf("no rows inserted")
 		return -1
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		log(nil, err)
+		log(err)
 		return -1
 	}
 	newKjob(int(id), method, specnum, endpoint, ciString, pages, table, nextRun)
 	return int(id)
-
 }
 
 func getJobs() {
 	stmt := safeQuery(fmt.Sprintf("SELECT id,method,spec,endpoint,entity,pages,`table`,nextrun FROM `%s`.`%s` WHERE err_disabled=0 ORDER BY id", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
 	defer stmt.Close()
-	//(id int, method string, specnum string, endpoint string, ciString string, pages uint16, table string, nextRun int64
 	var (
 		id                                         int
 		method, specnum, endpoint, ciString, table string
@@ -101,27 +99,25 @@ func getJobs() {
 		newKjob(id, method, specnum, endpoint, ciString, pages, table, max((iter*20)+stime, nextRun))
 		iter++
 	}
-
 }
 
 type kjob struct {
-
-	// "read-only" variables (not mutex'd, only written by newKjob())
 	id      int
 	Method  string `json:"method"` //Method: 'get', 'put', 'update', 'delete'
-	Source  string `json:"source"` //Entity: "region_id": "10000002", "character_id": "1120048880"
+	Source  string `json:"source"`
 	Owner   string `json:"owner"`
 	URL     string `json:"url"` //URL: concat of Spec and Endpoint, with entity processed
-	CI      string `json:"ci"`  //CI: concat of endpoint:JSON.Marshall(entity)
+	CI      string `json:"ci"`
 	spec    specS
 	TokenID uint64 `json:"token_id"`
 	RunTag  int64  `json:"runTag"`
 
 	NextRun   int64 `json:"nextRun"`
-	Expires   int64 `json:"expires"`    //milliseconds since 1970, when cache miss will occur
-	ExpiresIn int64 `json:"expires_in"` //milliseconds until expiration, at completion of first page (or head) pulled
+	Expires   int64 `json:"expires"`
+	ExpiresIn int64 `json:"expires_in"`
 
-	SeqErrors       int64           `json:"seq_errors"`
+	SeqErrors int64 `json:"seq_errors"`
+
 	insJob          strings.Builder // builder of records pending insert
 	RecordsIns      int64           `json:"records_ins"`     // count of records pending insert
 	BytesDownloaded metric          `json:"bytesDownloaded"` //total bytes downloaded
@@ -151,7 +147,7 @@ type kjob struct {
 func newKjob(id int, method string, specnum string, endpoint string, ciString string, pages uint16, table string, nextRun int64) {
 	tspec := getSpec(method, specnum, endpoint)
 	if tspec.invalid {
-		log(nil, "Invalid job received: SPEC invalid")
+		log("Invalid job received: SPEC invalid")
 		return
 	}
 	var entity map[string]string
@@ -163,7 +159,7 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 		if sentity, ok = entity["corporation_id"]; !ok {
 			if sentity, ok = entity["structure_id"]; !ok {
 				if sentity, ok = entity["character_id"]; !ok {
-					log(nil, "Invalid job received: unable to resolve entity")
+					log("Invalid job received: unable to resolve entity")
 					return
 				}
 				owner = sentity
@@ -207,7 +203,6 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 			tmp.beat()
 		}
 	}()
-	//log(nil, fmt.Sprintf("%s queued for %dms", tmp.CI, tmp.NextRun-ktime()))
 	kjobStackMutex.Lock()
 	kjobStack[id] = &tmp
 	kjobStackMutex.Unlock()
@@ -247,6 +242,7 @@ func (k *kjob) stopJob(failed bool) {
 	k.heart.Stop()
 	for it := range k.page {
 		k.page[it].destroy()
+		delete(k.page, it)
 	}
 	k.running = false
 	k.Expires = 0
@@ -263,7 +259,6 @@ func (k *kjob) stopJob(failed bool) {
 	k.RecordsIns = 0
 	k.RecordsUpd = 0
 	k.jobMutex.Unlock()
-	//defer runtime.GC()
 }
 func (k *kjob) run() {
 	if k.Pages == 0 {
@@ -274,7 +269,6 @@ func (k *kjob) run() {
 }
 func (k *kjob) queuePages() {
 	k.jobMutex.Lock()
-	//log("kjob.go:k.queuePages()", fmt.Sprintf("%s Queueing pages %d to %d", k.CI, k.PagesQueued+1, k.Pages))
 	for i := k.PagesQueued + 1; i <= k.Pages; i++ {
 		k.newPage(i, false)
 	}

@@ -1,12 +1,9 @@
-//////////////////////////////////////////////////////////////////////////////////
-// table_orders.go - `orders` table definition
-//////////////////////////////////////////////////////////////////////////////////
-//
+// `orders` table definition
+
 package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -90,7 +87,7 @@ func tablesInitorders() {
 				delete(k.job.sqldata, uint64(orderID)) //remove matched items from the map
 				orderspurged++
 			} else {
-				return errors.New("etag data does not match table")
+				// return errors.New("etag data does not match table")
 			}
 
 		}

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/net/http2"
 )
 
 // configuration file path
@@ -26,22 +28,31 @@ var client *http.Client
 // global configuration struct
 var c conf
 
-func log(message interface{}, message2 interface{}) {
+// centralized log function, so all output can be piped to other places
+func log(message ...interface{}) {
 	pc, fn, line, _ := runtime.Caller(1)
 	justfn := strings.Split(fn, "/")
-	if message == nil {
-		fmt.Printf("%.3f [%s(%s):%d] * %s\n", float64(ktime())/1000, justfn[len(justfn)-1], runtime.FuncForPC(pc).Name(), line, message2)
-	} else {
-		fmt.Printf("%.3f [%s(%s):%d] %s %s\n", float64(ktime())/1000, justfn[len(justfn)-1], runtime.FuncForPC(pc).Name(), line, message, message2)
+	var b strings.Builder
+	fmt.Fprintf(&b, "")
+	for it := range message {
+		fmt.Fprintf(&b, " %v", message[it])
 	}
+	fmt.Printf("%.3f [%s(%s):%d]%s\n", float64(ktime())/1000, justfn[len(justfn)-1], runtime.FuncForPC(pc).Name(), line, b.String())
 }
+
+// centralized log function, so all output can be piped to other places
+func logf(format string, a ...interface{}) {
+	log(fmt.Sprintf(format, a...))
+}
+
+// time format used throughout
 func ktime() int64 { return time.Now().UnixNano() / int64(time.Millisecond) }
 
 func safeMove(src string, dst string) {
 	os.Remove(dst + ".bak")
 	os.Rename(dst, dst+".bak")
 	if err := os.Rename(src, dst); err != nil {
-		log(nil, err)
+		log(err)
 		return
 	}
 	os.Remove(dst + ".bak")
@@ -51,29 +62,21 @@ func safeMove(src string, dst string) {
 func initConfig() {
 	jsonFile, err := os.Open(configFile)
 	if err != nil {
-		log(nil, err)
+		log(err)
 		panic(err)
 	}
 	defer jsonFile.Close()
 	byteValue, errr := ioutil.ReadAll(jsonFile)
 	if errr != nil {
-		log(nil, err)
+		log(err)
 		panic(err)
 	}
 	if err := json.Unmarshal(byteValue, &c); err != nil {
-		log(nil, err)
+		log(err)
 		panic(err)
 	}
-	log(nil, fmt.Sprintf("Read %db from %s", len(byteValue), configFile))
+	logf("Read %db from %s", len(byteValue), configFile)
 	byteValue = nil
-}
-
-// initialize http global
-func initClient() {
-	client = &http.Client{
-		//	Transport: &http2.Transport{},
-		Timeout: 7 * time.Second,
-	}
 }
 
 type conf struct {
@@ -90,11 +93,18 @@ type conf struct {
 	Tables              map[string]*table `json:"tables"`
 }
 
+// initialize http global
+func initClient() {
+	client = &http.Client{
+		Transport: &http2.Transport{},
+		Timeout:   7 * time.Second,
+	}
+}
+
 type mariadb struct {
 	User string `json:"user"`
 	Pass string `json:"pass"`
 }
-
 type oauth struct {
 	ClientID     string `json:"clientID"`
 	ClientSecret string `json:"clientSecret"`
@@ -108,6 +118,26 @@ type oauth struct {
 	APIBase      string `json:"apiBase"`
 }
 
+type specS struct {
+	invalid  bool
+	security string
+	cache    int
+	items    int
+	paged    bool
+}
+
+// get the stored spec information from SQL
+func getSpec(method string, specnum string, endpoint string) specS {
+	row := database.QueryRow(fmt.Sprintf("SELECT security,cache,items,paged FROM `%s`.`%s` WHERE method=? AND spec=? AND endpoint=?", c.Tables["spec"].DB, c.Tables["spec"].Name), method, specnum, endpoint)
+	var specc specS
+	err := row.Scan(&specc.security, &specc.cache, &specc.items, &specc.paged)
+	if err != nil {
+		specc.invalid = true
+		return specc
+	}
+	return specc
+}
+
 // debugging replacement for sync.Mutex that does more than block for ever. Do not use in production, it is VERY slow.
 type debugOnlyMutex struct {
 	lock       uint32
@@ -117,7 +147,7 @@ type debugOnlyMutex struct {
 	lockByTime int64
 }
 
-//(standin for sync.Mutex.Lock) Lock locks m. If the lock is already in use, it will periodically return diagnostic messages to stdout
+// (standin for sync.Mutex.Lock) Lock locks m. If the lock is already in use, it will periodically return diagnostic messages to stdout
 func (debugOnlyMutex *debugOnlyMutex) Lock() {
 	var ms uint32
 	var it uint32 = 1
@@ -162,7 +192,7 @@ func (debugOnlyMutex *debugOnlyMutex) Lock() {
 
 }
 
-//(standin for sync.Mutex.Unlock) unlocks debugOnlyMutex. If the mutex is already unlocked, it prints a descriptive message to stdout
+// (standin for sync.Mutex.Unlock) unlocks debugOnlyMutex. If the mutex is already unlocked, it prints a descriptive message to stdout
 func (debugOnlyMutex *debugOnlyMutex) Unlock() {
 	if !atomic.CompareAndSwapUint32(&debugOnlyMutex.lock, 1, 0) {
 		ctime := time.Now().UnixNano()
@@ -180,4 +210,16 @@ func max(v1 int64, v2 int64) int64 {
 		return v1
 	}
 	return v2
+}
+func byt(b uint64) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
 }

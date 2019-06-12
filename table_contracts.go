@@ -1,7 +1,5 @@
-//////////////////////////////////////////////////////////////////////////////////
-// table_contracts.go - `contracts` table definition
-//////////////////////////////////////////////////////////////////////////////////
-//
+// `contracts` table definition
+
 package main
 
 import (
@@ -56,7 +54,7 @@ func tablesInitcontracts() {
 		k.job.jobMutex.Lock()
 		var contract contracts
 		if err := json.Unmarshal(k.body, &contract); err != nil {
-			log(nil, k.body)
+			log(err)
 			return err
 		}
 		k.recs = int64(len(contract))

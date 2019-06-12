@@ -1,13 +1,4 @@
-//////////////////////////////////////////////////////////////////////////////////
-// kpage.go - ESI Page Loading
-//////////////////////////////////////////////////////////////////////////////////
-//  kpageQueueS.Push(element):  Adds element to the FIFO queue
-//  kpageQueueS.Pop():  Returns the oldest element from the queue
-//  gokpageQueueTick(t):  Timer tick function
-//  kpageQueueInit(): Timer/Queue Init (called once from main)
-//  kjob.newPage(page): Queues page on behalf of kjob
-//  curInFlightmm(): Silly Mechanics (defer cal for decrementing curInFlight)
-//  kpage.requestPage(): Launches kpage request
+// ESI Page Loading
 
 package main
 
@@ -16,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,15 +22,12 @@ var errorResetTimer *time.Timer
 var backoffTimer *time.Timer
 
 var backoff = false
-var queueTicker *time.Timer
+var queueTicker *time.Ticker
 
 var curInFlight metric
 var lastInFlight uint64
 var inFlight = make(map[uint64]*kpage, c.MaxInFlight)
 var inFlightMutex sync.Mutex
-
-var pagesFired metric
-var lastFired uint64
 
 var pagesFinished metric
 var lastFinished uint64
@@ -102,7 +91,6 @@ func gokpageQueueTick() {
 					}
 				}
 				curInFlight.Inc()
-				pagesFired.Inc()
 				inFlight[err] = qitem
 				inFlight[err].running = ctime.UnixNano() / int64(time.Millisecond)
 				go inFlight[err].requestPage()
@@ -114,7 +102,7 @@ func gokpageQueueTick() {
 func backoffReset() {
 	for range backoffTimer.C {
 		backoff = false
-		log(nil, "backoff reset")
+		log("backoff reset")
 	}
 }
 func errorReset() {
@@ -123,7 +111,7 @@ func errorReset() {
 	}
 }
 
-//initialize kpage queue tickers
+// initialize kpage queue tickers
 func kpageInit() {
 
 	kpageQueue = &kpageQueueS{
@@ -137,7 +125,7 @@ func kpageInit() {
 		inFlight[i] = &kpage{dead: true}
 	}
 
-	queueTicker = time.NewTimer(5 * time.Second)
+	queueTicker = time.NewTicker(1 * time.Second)
 	go queueLog()
 
 	backoffTimer = time.NewTimer(time.Second * 60 * 60 * 24 * 365) // 1 year.
@@ -145,18 +133,21 @@ func kpageInit() {
 
 	errorResetTimer = time.NewTimer(time.Second * 60 * 60 * 24 * 365) // 1 year.
 	go errorReset()
-	log(nil, "kpage tickers started")
+	log("kpage tickers started")
 }
 
 func queueLog() {
 	for range queueTicker.C {
-		if !backoff && (kpageQueue.len.Get() > 0 || lastFinished != pagesFinished.Get() || lastFired != pagesFired.Get() || lastInFlight != curInFlight.Get()) {
+		if !backoff && (kpageQueue.len.Get() > 0 || lastFinished != pagesFinished.Get() || lastInFlight != curInFlight.Get()) {
 			timenow := ktime()
 			lastFinished = pagesFinished.Get()
-			lastFired = pagesFired.Get()
 			lastInFlight = curInFlight.Get()
 			var b strings.Builder
-			fmt.Fprintf(&b, "%12d/%12d Q:%6d Fired:%6d Done:%6d Hot(%2d/%d) ", bCached.Get(), bDownload.Get(), kpageQueue.len.Get(), lastFired, lastFinished, lastInFlight, c.MaxInFlight)
+
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+
+			fmt.Fprintf(&b, "Alloc:%s, Sys:%s, NumGC:%4d %11d/%11d Q:%6d Done:%6d Hot(%2d/%d) ", byt(m.Alloc), byt(m.Sys), m.NumGC, bCached.Get(), bDownload.Get(), kpageQueue.len.Get(), lastFinished, lastInFlight, c.MaxInFlight)
 			inFlightMutex.Lock()
 			for it := uint64(0); it < c.MaxInFlight; it++ {
 				if inFlight[it].dead {
@@ -168,30 +159,6 @@ func queueLog() {
 			inFlightMutex.Unlock()
 			log("<QUEUE>", b.String())
 		}
-		// pctfull := uint8(100 * (float64(lastInFlight) / float64(c.MaxInFlight)))
-		queueTicker.Reset(125 * time.Millisecond)
-
-		// if pctfull > 90 {
-		// 	queueTicker.Reset(125 * time.Millisecond)
-		// } else if pctfull > 80 {
-		// 	queueTicker.Reset(250 * time.Millisecond)
-		// } else if pctfull > 70 {
-		// 	queueTicker.Reset(500 * time.Millisecond)
-		// } else if pctfull > 60 {
-		// 	queueTicker.Reset(500 * time.Millisecond)
-		// } else if pctfull > 50 {
-		// 	queueTicker.Reset(1 * time.Second)
-		// } else if pctfull > 40 {
-		// 	queueTicker.Reset(1 * time.Second)
-		// } else if pctfull > 30 {
-		// 	queueTicker.Reset(2 * time.Second)
-		// } else if pctfull > 20 {
-		// 	queueTicker.Reset(2 * time.Second)
-		// } else if pctfull > 10 {
-		// 	queueTicker.Reset(4 * time.Second)
-		// } else {
-		// 	queueTicker.Reset(4 * time.Second)
-		// }
 	}
 }
 
@@ -207,6 +174,7 @@ func (k *kjob) newPage(page uint16, requeue bool) {
 	}
 	kpageQueue.Push(k.page[page])
 }
+
 func (k *kpage) destroy() {
 	if k.running > 0 {
 		curInFlight.Dec()
@@ -255,9 +223,7 @@ func (k *kpage) requestPage() {
 	}
 
 	defer k.resp.Body.Close()
-	// ce := ""
 	if a, ok := k.resp.Header["Content-Encoding"]; ok {
-		// ce = a[0]
 		if a[0] == "gzip" {
 			re, err := gzip.NewReader(k.resp.Body)
 			if err != nil {
@@ -271,8 +237,6 @@ func (k *kpage) requestPage() {
 				k.job.newPage(k.page, true)
 				return
 			}
-			// log(k.cip, fmt.Sprintf("got Proto:%s Status:%s Content-Length:%d TransferEncoding:%v Uncompressed:%t Content-Encoding:%s len:%d", k.resp.Proto, k.resp.Status, k.resp.ContentLength, k.resp.TransferEncoding, k.resp.Uncompressed, ce, len(k.body)))
-
 		}
 	} else {
 		k.body, err = ioutil.ReadAll(k.resp.Body)
@@ -282,11 +246,9 @@ func (k *kpage) requestPage() {
 			return
 		}
 	}
-
 	if k.dead {
 		return
 	}
-
 	if k.resp.StatusCode == 200 {
 		var err error
 		if err = k.job.table.handlePageData(k); err != nil {
@@ -294,7 +256,6 @@ func (k *kpage) requestPage() {
 			k.job.newPage(k.page, true)
 			return
 		}
-
 		k.job.jobMutex.Lock()
 		k.pageMutex.Lock()
 		if k.insrecs > 0 {
@@ -348,14 +309,12 @@ func (k *kpage) requestPage() {
 		if pgs, ok := k.resp.Header["X-Pages"]; ok {
 			k.job.updatePageCount(pgs[0])
 		}
-
 		k.job.jobMutex.Lock()
 		k.job.Records += k.recs
 		k.job.jobMutex.Unlock()
 		if k.dead {
 			return
 		}
-
 		k.job.processPage()
 	} else {
 		log(k.cip, fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db", k.resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body)))
@@ -370,7 +329,7 @@ func processBackoff(hdr http.Header, k *kjob) (enabled bool) {
 	errorlimitreset, okerrorlimitreset := hdr["X-Esi-Error-Limit-Reset"]
 	if okerrorlimitremain && okerrorlimitreset {
 		k.SeqErrors++
-		log(nil, fmt.Sprintf("Processing %s:%t/%s:%t Errors%d", errorlimitremain, okerrorlimitremain, errorlimitreset, okerrorlimitreset, k.SeqErrors))
+		logf("Processing %s:%t/%s:%t Errors:%d", errorlimitremain, okerrorlimitremain, errorlimitreset, okerrorlimitreset, k.SeqErrors)
 		errt, _ := strconv.Atoi(errorlimitreset[0])
 		errr, _ := strconv.Atoi(errorlimitremain[0])
 		errorRemain.Set(uint64(errr))
@@ -378,7 +337,7 @@ func processBackoff(hdr http.Header, k *kjob) (enabled bool) {
 		if errr <= c.BackoffThreshold {
 			backoff = true
 			backoffTimer.Reset(c.BackoffSeconds * time.Second)
-			log(nil, fmt.Sprintf("backing off for %d seconds", c.BackoffSeconds))
+			logf("backing off for %d seconds", c.BackoffSeconds)
 		}
 		if k.SeqErrors >= c.ErrDisableThreshold {
 			log(k.CI, "ERR_DISABLE")
@@ -390,8 +349,8 @@ func processBackoff(hdr http.Header, k *kjob) (enabled bool) {
 			kjobStackMutex.Unlock()
 			return false
 		}
-		k.heart.Reset(30 * time.Second)
-		time.Sleep(5 * time.Second)
+		k.heart.Reset(40 * time.Second)
+		time.Sleep(30 * time.Second)
 
 	}
 	return true

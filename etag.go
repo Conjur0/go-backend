@@ -1,19 +1,10 @@
-//////////////////////////////////////////////////////////////////////////////////
-// etag.go - eTag Interface
-//////////////////////////////////////////////////////////////////////////////////
-//  readEtags(): reads json `etagFile`, and unmarshals into `etag`
-//  writeEtags(): Marshals contents of `etag` to json `etagFile` if `etagDirty`
-//  getEtagData(cip): returns the stored data for the given CIP
-//  setEtag(cip, tag, value): removes existing eTags for the given CIP, records the new tag and data, and marks the file as dirty
-//  etagWriteTimerInit(): Timer Init (called once from main)
+// eTag Interface
 
 package main
 
 import (
 	"database/sql"
 	"fmt"
-
-	_ "github.com/go-sql-driver/mysql"
 )
 
 var getetag *sql.Stmt
@@ -28,25 +19,25 @@ func etagInit() {
 	table := c.Tables["etag"]
 	getetag, err = database.Prepare(fmt.Sprintf("SELECT etag FROM `%s`.`%s` WHERE cip = ? LIMIT 1", table.DB, table.Name))
 	if err != nil {
-		log(nil, err)
+		log(err)
 		panic(err)
 	}
 
 	getetagids, err = database.Prepare(fmt.Sprintf("SELECT ids,len FROM `%s`.`%s` WHERE cip = ? LIMIT 1", table.DB, table.Name))
 	if err != nil {
-		log(nil, err)
+		log(err)
 		panic(err)
 	}
 
 	setetag, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (cip,etag,ids,len) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE etag=VALUES(etag),ids=VALUES(ids),len=VALUES(len)", table.DB, table.Name))
 	if err != nil {
-		log(nil, err)
+		log(err)
 		panic(err)
 	}
 
 	killetag, err = database.Prepare(fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE cip=?", table.DB, table.Name))
 	if err != nil {
-		log(nil, err)
+		log(err)
 		panic(err)
 	}
 }
