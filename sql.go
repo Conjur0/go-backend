@@ -17,7 +17,7 @@ func sqlInit() {
 	var err error
 
 	log("connect to SQL, user:" + c.Mariadb.User)
-	database, err = sql.Open("mysql", c.Mariadb.User+":"+c.Mariadb.Pass+"@tcp(127.0.0.1:3306)/?maxAllowedPacket=0")
+	database, err = sql.Open("mysql", c.Mariadb.User+":"+c.Mariadb.Pass+"@unix(/var/run/mysqld/mysqld.sock)/?maxAllowedPacket=0")
 	if err != nil {
 		panic("Unable to connect to SQL!")
 	}

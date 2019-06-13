@@ -5,7 +5,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 type skills struct {
@@ -22,17 +21,6 @@ type skill struct {
 }
 
 func tablesInitskills() {
-	c.Tables["skills"].handleStart = func(k *kjob) error { //jobMutex is already locked for us.
-		numRecords, ress := k.table.getAllData(k.Source)
-		k.sqldata = make(map[uint64]uint64, numRecords)
-		defer ress.Close()
-		var key, data uint64
-		for ress.Next() {
-			ress.Scan(&key, &data)
-			k.sqldata[key] = data
-		}
-		return nil
-	}
 	c.Tables["skills"].handlePageData = func(k *kpage) error {
 		k.pageMutex.Lock()
 		k.job.jobMutex.Lock()
@@ -57,34 +45,18 @@ func tablesInitskills() {
 				}
 				delete(k.job.sqldata, uint64(skill.Skills[it].SkillID)) //remove matched items from the map
 			} else {
+				k.job.allsqldata[skill.Skills[it].SkillID] = skill.Skills[it].ActiveSkillLevel
 				fmt.Fprintf(&k.ins, "%s(%s,%d,%d,%d,%d)", k.inscomma, k.job.Source, skill.Skills[it].SkillID, skill.Skills[it].SkillpointsInSkill, skill.Skills[it].ActiveSkillLevel, skill.Skills[it].TrainedSkillLevel)
 				k.inscomma = ","
 				k.insrecs++
 			}
 		}
+		logf("done with sqldata:%d allsqldata:%d inslen:%d", len(k.job.sqldata), len(k.job.allsqldata), k.ins.Len())
 		k.pageMutex.Unlock()
 		k.job.jobMutex.Unlock()
 		return nil
 	}
-	c.Tables["skills"].handlePageCached = func(k *kpage) error {
-		k.pageMutex.Lock()
-		k.job.jobMutex.Lock()
-		defer k.pageMutex.Unlock()
-		defer k.job.jobMutex.Unlock()
-		skill := strings.Split(k.ids.String(), ",")
-		k.recs = int64(len(skill))
-		return nil
-	}
 	c.Tables["skills"].handleWriteIns = func(k *kjob) int64 { //jobMutex is already locked for us.
 		return safeExec(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s %s", k.table.DB, k.table.Name, k.table.columnOrder(), k.insJob.String(), k.table.Duplicates))
-	}
-	c.Tables["skills"].handleWriteUpd = func(k *kjob) int64 { //jobMutex is already locked for us.
-		return 0
-	}
-	c.Tables["skills"].handleEndGood = func(k *kjob) int64 { //jobMutex is already locked for us.
-		return 0
-	}
-	c.Tables["skills"].handleEndFail = func(k *kjob) { //jobMutex is already locked for us.
-		return
 	}
 }

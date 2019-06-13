@@ -219,6 +219,12 @@ func max(v1 int64, v2 int64) int64 {
 	}
 	return v2
 }
+func min(v1 int64, v2 int64) int64 {
+	if v1 < v2 {
+		return v1
+	}
+	return v2
+}
 func byt(b uint64) string {
 	const unit = 1024
 	if b < unit {
@@ -230,6 +236,18 @@ func byt(b uint64) string {
 		exp++
 	}
 	return fmt.Sprintf("%s%cb", bytFormat(float64(b)/float64(div)), "kmgtpe"[exp])
+}
+func bytn(b uint64) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%d", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%s%c", bytFormat(float64(b)/float64(div)), "kmgtpe"[exp])
 }
 func bytFormat(num float64) string {
 	if num < 9.5 {

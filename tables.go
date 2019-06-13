@@ -3,7 +3,6 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -59,25 +58,20 @@ func (s sQLenum) ifnull() string {
 
 // table definition
 type table struct {
-	DB               string               `json:"db"`                    //Database Name
-	Name             string               `json:"name"`                  //Table Name
-	PrimaryKey       string               `json:"primary_key,omitempty"` //Primary BTREE Index (multiple fields separated with :)
-	Changed          string               `json:"changed,omitempty"`     //what to poll to see if the record needs to be updated (uint64)
-	ChangedKey       string               `json:"changed_key,omitempty"` //what to poll to see if the record needs to be updated (uint64)
-	JobKey           string               `json:"job_key,omitempty"`     //what ties this row to the queried entity/source
-	Keys             map[string]string    `json:"keys,omitempty"`        //Other Indexes (multiple fields separated with :)
-	UniqueKeys       map[string]string    `json:"unique_keys,omitempty"` //Other other indexes (multiple fields separated with :)
-	ColumnOrder      []string             `json:"column_order,omitempty"`
-	Duplicates       string               `json:"duplicates,omitempty"`
-	Proto            []string             `json:"proto,omitempty"`
-	Tail             string               `json:"tail,omitempty"` //" ENGINE=InnoDB DEFAULT CHARSET=latin1;" appended to the end of the create table query
-	handleStart      func(k *kjob) error  //Called when job started
-	handlePageData   func(k *kpage) error //Called to process NEW (200) page data
-	handlePageCached func(k *kpage) error //Called to process OLD (304) page data
-	handleWriteIns   func(k *kjob) int64  //Called when len(Ins) > sql_ins_threshold, to INSERT data, returns number of INSERTed records
-	handleWriteUpd   func(k *kjob) int64  //Called when len(InsIds) > sql_ins_threshold, to UPDATE data, returns number of UPDATEd records
-	handleEndGood    func(k *kjob) int64  //Called when job completes successfully, returns number of DELETEd records
-	handleEndFail    func(k *kjob)        //Called when job fails
+	DB             string               `json:"db"`                    //Database Name
+	Name           string               `json:"name"`                  //Table Name
+	PrimaryKey     string               `json:"primary_key,omitempty"` //Primary BTREE Index (multiple fields separated with :)
+	Changed        string               `json:"changed,omitempty"`     //what to poll to see if the record needs to be updated (uint64)
+	ChangedKey     string               `json:"changed_key,omitempty"` //what to poll to see if the record needs to be updated (uint64)
+	JobKey         string               `json:"job_key,omitempty"`     //what ties this row to the queried entity/source
+	Keys           map[string]string    `json:"keys,omitempty"`        //Other Indexes (multiple fields separated with :)
+	UniqueKeys     map[string]string    `json:"unique_keys,omitempty"` //Other other indexes (multiple fields separated with :)
+	ColumnOrder    []string             `json:"column_order,omitempty"`
+	Duplicates     string               `json:"duplicates,omitempty"`
+	Proto          []string             `json:"proto,omitempty"`
+	Tail           string               `json:"tail,omitempty"` //" ENGINE=InnoDB DEFAULT CHARSET=latin1;" appended to the end of the create table query
+	handlePageData func(k *kpage) error //Called to process NEW (200) page data
+	handleWriteIns func(k *kjob) int64  //Called when len(Ins) > sql_ins_threshold, to INSERT data, returns number of INSERTed records
 }
 
 // return concatenated _columnOrder
@@ -144,16 +138,26 @@ func (t *table) create() string {
 	return b.String()
 }
 
-func (t *table) getAllData(source string) (int, *sql.Rows) {
-	where := ""
-	if len(t.JobKey) > 0 {
-		where = fmt.Sprintf(" WHERE %s=%s", t.JobKey, source)
+func (t *table) getAllData(k *kjob) {
+	if len(k.allsqldata) == 0 {
+		res := safeQuery(fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` WHERE %s=%s", t.DB, t.Name, t.JobKey, k.Source))
+		defer res.Close()
+		var numRecords int
+		res.Scan(&numRecords)
+		ress := safeQuery(fmt.Sprintf("SELECT %s,%s FROM `%s`.`%s` WHERE %s=%s", t.Changed, t.ChangedKey, t.DB, t.Name, t.JobKey, k.Source))
+		k.allsqldata = make(map[uint64]uint64, numRecords)
+		defer ress.Close()
+		var key, data uint64
+		for ress.Next() {
+			ress.Scan(&key, &data)
+			k.allsqldata[key] = data
+		}
 	}
-	res := safeQuery(fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`%s", t.DB, t.Name, where))
-	defer res.Close()
-	var numRecords int
-	res.Scan(&numRecords)
-	return numRecords, safeQuery(fmt.Sprintf("SELECT %s,%s FROM `%s`.`%s`%s", t.Changed, t.ChangedKey, t.DB, t.Name, where))
+	k.sqldata = make(map[uint64]uint64, len(k.allsqldata))
+	for it := range k.allsqldata {
+		k.sqldata[it] = k.allsqldata[it]
+	}
+	return
 }
 
 // call table_*.go init functions, create tables if needed

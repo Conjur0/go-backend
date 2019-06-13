@@ -25,6 +25,8 @@ var jobrun *sql.Stmt
 var jobadd *sql.Stmt
 var jobget *sql.Stmt
 
+var sQLProcessing metric
+
 type kjobQueueStruct struct {
 	elements chan kjob
 }
@@ -123,7 +125,7 @@ func getJobs() {
 			delete(existingJobs, id) //remove all jobs that were seen by sql
 			continue
 		}
-		newKjob(id, method, specnum, endpoint, ciString, pages, table, max((iter*50)+stime, nextRun))
+		newKjob(id, method, specnum, endpoint, ciString, pages, table, max((iter*10)+stime, nextRun))
 		addedJobs++
 		iter++
 	}
@@ -169,10 +171,7 @@ type kjob struct {
 	insJob          strings.Builder // builder of records pending insert
 	RecordsIns      int64           `json:"records_ins"`     // count of records pending insert
 	BytesDownloaded metric          `json:"bytesDownloaded"` //total bytes downloaded
-
-	updJob      strings.Builder // builder of records pending update
-	RecordsUpd  int64           `json:"records_upd"` // count of records pending update
-	BytesCached metric          `json:"bytesCached"` //total bytes cached
+	BytesCached     metric          `json:"bytesCached"`     //total bytes cached
 
 	PullType       uint16 `json:"pullType"`
 	Pages          uint16 `json:"pages"`          //Pages: 0, 1
@@ -183,12 +182,13 @@ type kjob struct {
 	AffectedRows int64 `json:"affectedRows"` //cumlative count of affected records
 	RemovedRows  int64 `json:"removedRows"`  //cumlative count of removed records
 
-	heart    *time.Timer //heartbeat timer
-	running  bool
-	jobMutex sync.Mutex
-	page     map[uint16]*kpage // hashmap of [pagenumber]*kpage for all child elements
-	table    *table
-	sqldata  map[uint64]uint64
+	heart      *time.Timer //heartbeat timer
+	running    bool
+	jobMutex   sync.Mutex
+	page       map[uint16]*kpage // hashmap of [pagenumber]*kpage for all child elements
+	table      *table
+	sqldata    map[uint64]uint64
+	allsqldata map[uint64]uint64
 }
 
 func newKjob(id int, method string, specnum string, endpoint string, ciString string, pages uint16, table string, nextRun int64) {
@@ -211,7 +211,7 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 			if sentity, ok = entity["structure_id"]; !ok {
 				if sentity, ok = entity["character_id"]; !ok {
 					logf("Invalid job received: unable to resolve entity (%s %s%s) %s", method, specnum, endpoint, ciString)
-					sentity = "0"
+					sentity = "1"
 					//return
 				}
 				owner = sentity
@@ -270,17 +270,11 @@ func (k *kjob) beat() {
 
 func (k *kjob) start() {
 	k.jobMutex.Lock()
-	k.heart.Reset(30 * time.Second)
+	k.heart.Reset(1800 * time.Second)
 	k.RunTag = ktime()
 	k.running = true
 	addMetric(k.CI)
-	if err := k.table.handleStart(k); err != nil {
-		log(k.CI, err)
-		k.jobMutex.Unlock()
-		k.forceNextRun(86400000)
-		k.stopJob(true)
-		return
-	}
+	k.table.getAllData(k)
 	k.jobMutex.Unlock()
 	k.run()
 }
@@ -291,10 +285,20 @@ func (k *kjob) stopJob(failed bool) {
 		delete(k.page, it)
 	}
 	if failed {
-		k.table.handleEndFail(k)
+		k.sqldata = make(map[uint64]uint64)
 	} else {
 		k.SeqErrors = 0
-		k.RemovedRows += k.table.handleEndGood(k)
+		if len(k.sqldata) > 0 {
+			var b strings.Builder
+			comma := ""
+			for it := range k.sqldata {
+				fmt.Fprintf(&b, "%s%d", comma, it)
+				delete(k.allsqldata, it)
+				comma = ","
+			}
+			k.RemovedRows += safeExec(fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s=%s AND %s IN (%s)", k.table.DB, k.table.Name, k.table.JobKey, k.Source, k.table.Changed, b.String()))
+		}
+		k.sqldata = make(map[uint64]uint64)
 		joblog.Exec(ktime(), k.id, k.PagesProcessed, k.Records, k.AffectedRows, k.RemovedRows, getMetric(k.CI), k.BytesDownloaded.Get(), k.BytesCached.Get())
 		jobrun.Exec(k.NextRun, k.id)
 	}
@@ -309,9 +313,7 @@ func (k *kjob) stopJob(failed bool) {
 	k.BytesCached.Reset()
 	k.BytesDownloaded.Reset()
 	k.insJob.Reset()
-	k.updJob.Reset()
 	k.RecordsIns = 0
-	k.RecordsUpd = 0
 	k.running = false
 	k.jobMutex.Unlock()
 }
@@ -362,7 +364,7 @@ func (k *kjob) requestHead() {
 			timepct = 0
 		}
 		if timepct < c.MinCachePct {
-			log(k.CI, " expires too soon, recycling!")
+			//log(k.CI, " expires too soon, recycling!")
 			k.stopJob(true)
 			return
 		}
@@ -385,7 +387,7 @@ func (k *kjob) updateExp(expire string) {
 		k.jobMutex.Lock()
 		k.Expires = int64(exp.UnixNano() / int64(time.Millisecond))
 		k.ExpiresIn = k.Expires - ktime()
-		k.NextRun = k.Expires + 250
+		k.NextRun = k.Expires
 		k.jobMutex.Unlock()
 	}
 }
@@ -409,16 +411,13 @@ func (k *kjob) updatePageCount(pages string) {
 	}
 }
 func (k *kjob) processPage() {
+	sQLProcessing.Inc()
+	defer sQLProcessing.Dec()
 	k.jobMutex.Lock()
 	k.PagesProcessed++
 	pagesFinished.Inc()
 
-	if (k.updJob.Len() >= 50000) || ((k.updJob.Len() > 0) && k.PagesProcessed == k.Pages) {
-		k.AffectedRows += k.table.handleWriteUpd(k)
-		k.RecordsUpd = 0
-		k.updJob.Reset()
-	}
-	if (k.insJob.Len() >= 50000) || ((k.insJob.Len() > 0) && k.PagesProcessed == k.Pages) {
+	if (k.insJob.Len() >= 500000) || ((k.insJob.Len() > 0) && k.PagesProcessed == k.Pages) {
 		k.AffectedRows += k.table.handleWriteIns(k)
 		k.RecordsIns = 0
 		k.insJob.Reset()

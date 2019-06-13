@@ -32,6 +32,8 @@ var inFlightMutex sync.Mutex
 var pagesFinished metric
 var lastFinished uint64
 
+var lastSQL uint64
+
 var bCached metric
 var bDownload metric
 
@@ -49,12 +51,9 @@ type kpage struct {
 	pageMutex sync.Mutex
 	ids       strings.Builder
 	ins       strings.Builder
-	upd       strings.Builder
 	recs      int64
 	insrecs   int64
-	updrecs   int64
 	inscomma  string
-	updcomma  string
 	idscomma  string
 }
 
@@ -123,7 +122,7 @@ func kpageInit() {
 		inFlight[i] = &kpage{dead: true}
 	}
 
-	queueTicker = time.NewTicker(1 * time.Minute)
+	queueTicker = time.NewTicker(2 * time.Second)
 	go queueLog()
 
 	backoffTimer = time.NewTimer(time.Second * 60 * 60 * 24 * 365) // 1 year.
@@ -136,16 +135,15 @@ func kpageInit() {
 
 func queueLog() {
 	for range queueTicker.C {
-		if !backoff && (kpageQueue.len.Get() > 0 || lastFinished != pagesFinished.Get() || lastInFlight != curInFlight.Get()) {
+		if !backoff && (kpageQueue.len.Get() > 0 || lastSQL != sQLProcessing.Get() || lastFinished != pagesFinished.Get() || lastInFlight != curInFlight.Get()) {
 			timenow := ktime()
 			lastFinished = pagesFinished.Get()
 			lastInFlight = curInFlight.Get()
+			lastSQL = sQLProcessing.Get()
 			var b strings.Builder
-
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
-
-			fmt.Fprintf(&b, "<QUEUE> Alloc:%7s Sys:%7s Cached:%7s DL:%7s Q:%6d Done:%6d Hot(%2d/%d) ", byt(m.Alloc), byt(m.Sys), byt(bCached.Get()), byt(bDownload.Get()), kpageQueue.len.Get(), lastFinished, lastInFlight, c.MaxInFlight)
+			fmt.Fprintf(&b, "<QUEUE> Alloc:%7s Sys:%7s Objects:%6s Cached:%7s DL:%7s Q:%6d Done:%6s SQL:%d Hot(%2d/%d) ", byt(m.Alloc), byt(m.Sys), bytn(m.HeapObjects), byt(bCached.Get()), byt(bDownload.Get()), kpageQueue.len.Get(), bytn(lastFinished), lastSQL, lastInFlight, c.MaxInFlight)
 			inFlightMutex.Lock()
 			for it := uint64(0); it < c.MaxInFlight; it++ {
 				if inFlight[it].dead {
@@ -179,10 +177,8 @@ func (k *kpage) destroy() {
 		k.running = 0
 	}
 	k.insrecs = 0
-	k.updrecs = 0
 	k.ins.Reset()
 	k.ids.Reset()
-	k.upd.Reset()
 	k.dead = true
 }
 func (k *kpage) requestPage() {
@@ -251,7 +247,6 @@ func (k *kpage) requestPage() {
 		if k.dead {
 			return
 		}
-
 		var err error
 		if err = k.job.table.handlePageData(k); err != nil {
 			log(k.cip, err)
@@ -265,15 +260,7 @@ func (k *kpage) requestPage() {
 				k.job.insJob.WriteString(",")
 			}
 			k.job.insJob.WriteString(k.ins.String())
-
 			k.job.RecordsIns += k.insrecs
-		}
-		if k.updrecs > 0 {
-			if k.job.RecordsUpd > 0 {
-				k.job.updJob.WriteString(",")
-			}
-			k.job.updJob.WriteString(k.upd.String())
-			k.job.RecordsUpd += k.updrecs
 		}
 		k.job.jobMutex.Unlock()
 		k.pageMutex.Unlock()
@@ -289,14 +276,27 @@ func (k *kpage) requestPage() {
 			k.job.newPage(k.page, true)
 			return
 		}
-		k.ids.WriteString(ids)
-		if k.ids.Len() > 0 {
-			if err = k.job.table.handlePageCached(k); err != nil {
-				killEtag(k.cip)
-				log(k.cip, err)
-				k.job.newPage(k.page, true)
-				return
+		if len(ids) > 0 {
+			k.pageMutex.Lock()
+			k.job.jobMutex.Lock()
+			ids := strings.Split(ids, ",")
+			k.recs = int64(len(ids))
+			var id int
+			for it := range ids {
+				id, _ = strconv.Atoi(ids[it])
+				if _, ok := k.job.sqldata[uint64(id)]; ok {
+					delete(k.job.sqldata, uint64(id)) //remove matched items from the map
+				} else {
+					killEtag(k.cip)
+					log(k.cip, "etag data does not match table %d not found in table")
+					k.pageMutex.Unlock()
+					k.job.jobMutex.Unlock()
+					k.job.newPage(k.page, true)
+					return
+				}
 			}
+			k.pageMutex.Unlock()
+			k.job.jobMutex.Unlock()
 		}
 		bCached.Add(uint64(length))
 		k.job.BytesCached.Add(uint64(length))
@@ -315,7 +315,7 @@ func (k *kpage) requestPage() {
 		if k.dead {
 			return
 		}
-		k.job.processPage()
+		go k.job.processPage()
 	} else {
 		log(k.cip, fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db", resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body)))
 		if processBackoff(resp.Header, k.job) {
