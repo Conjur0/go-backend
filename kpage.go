@@ -44,8 +44,6 @@ type kpage struct {
 	page      uint16
 	cip       string
 	body      []byte
-	req       *http.Request
-	resp      *http.Response
 	running   int64
 	dead      bool
 	pageMutex sync.Mutex
@@ -125,7 +123,7 @@ func kpageInit() {
 		inFlight[i] = &kpage{dead: true}
 	}
 
-	queueTicker = time.NewTicker(1 * time.Second)
+	queueTicker = time.NewTicker(1 * time.Minute)
 	go queueLog()
 
 	backoffTimer = time.NewTimer(time.Second * 60 * 60 * 24 * 365) // 1 year.
@@ -147,7 +145,7 @@ func queueLog() {
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
 
-			fmt.Fprintf(&b, "Alloc:%s, Sys:%s, NumGC:%4d %11d/%11d Q:%6d Done:%6d Hot(%2d/%d) ", byt(m.Alloc), byt(m.Sys), m.NumGC, bCached.Get(), bDownload.Get(), kpageQueue.len.Get(), lastFinished, lastInFlight, c.MaxInFlight)
+			fmt.Fprintf(&b, "<QUEUE> Alloc:%7s Sys:%7s Cached:%7s DL:%7s Q:%6d Done:%6d Hot(%2d/%d) ", byt(m.Alloc), byt(m.Sys), byt(bCached.Get()), byt(bDownload.Get()), kpageQueue.len.Get(), lastFinished, lastInFlight, c.MaxInFlight)
 			inFlightMutex.Lock()
 			for it := uint64(0); it < c.MaxInFlight; it++ {
 				if inFlight[it].dead {
@@ -157,7 +155,7 @@ func queueLog() {
 				}
 			}
 			inFlightMutex.Unlock()
-			log("<QUEUE>", b.String())
+			logq(b.String())
 		}
 	}
 }
@@ -200,56 +198,60 @@ func (k *kpage) requestPage() {
 		return
 	}
 
-	k.req, err = http.NewRequest(strings.ToUpper(k.job.Method), c.EsiURL+k.job.URL+"&page="+strconv.Itoa(int(k.page)), nil)
+	req, err := http.NewRequest(strings.ToUpper(k.job.Method), c.EsiURL+k.job.URL+"&page="+strconv.Itoa(int(k.page)), nil)
 	if err != nil {
 		log(k.cip, err)
 		k.job.forceNextRun(86400000)
 		k.job.stopJob(true)
 		return
 	}
-	k.req.Header.Add("Accept-Encoding", "gzip")
+	req.Header.Add("Accept-Encoding", "gzip")
 	etaghdr := getEtag(k.cip)
 	if len(etaghdr) > 0 {
-		k.req.Header.Add("If-None-Match", etaghdr)
+		req.Header.Add("If-None-Match", etaghdr)
 	}
 	if k.job.spec.security != "" {
-		k.req.Header.Add("Authorization", "Bearer "+getAccessToken(k.job.TokenID, k.job.spec.security))
+		req.Header.Add("Authorization", "Bearer "+getAccessToken(k.job.TokenID, k.job.spec.security))
 	}
-	k.resp, err = client.Do(k.req)
+	resp, err := client.Do(req)
 	if err != nil {
 		log(k.cip, err)
 		k.job.newPage(k.page, true)
 		return
 	}
 
-	defer k.resp.Body.Close()
-	if a, ok := k.resp.Header["Content-Encoding"]; ok {
-		if a[0] == "gzip" {
-			re, err := gzip.NewReader(k.resp.Body)
-			if err != nil {
-				log(k.cip, err)
-				k.job.newPage(k.page, true)
-				return
+	defer resp.Body.Close()
+	if resp.StatusCode == 200 {
+		if a, ok := resp.Header["Content-Encoding"]; ok {
+			if a[0] == "gzip" {
+				re, err := gzip.NewReader(resp.Body)
+
+				if err != nil {
+					log(k.cip, err)
+					k.job.newPage(k.page, true)
+					return
+				}
+				k.body, err = ioutil.ReadAll(re)
+				if err != nil {
+					log(k.cip, err)
+					k.job.newPage(k.page, true)
+					return
+				}
 			}
-			k.body, err = ioutil.ReadAll(re)
+		} else {
+			k.body, err = ioutil.ReadAll(resp.Body)
 			if err != nil {
 				log(k.cip, err)
 				k.job.newPage(k.page, true)
 				return
 			}
 		}
-	} else {
-		k.body, err = ioutil.ReadAll(k.resp.Body)
-		if err != nil {
-			log(k.cip, err)
-			k.job.newPage(k.page, true)
+		bDownload.Add(uint64(len(k.body)))
+		k.job.BytesDownloaded.Add(uint64(len(k.body)))
+		if k.dead {
 			return
 		}
-	}
-	if k.dead {
-		return
-	}
-	if k.resp.StatusCode == 200 {
+
 		var err error
 		if err = k.job.table.handlePageData(k); err != nil {
 			log(k.cip, err)
@@ -276,12 +278,10 @@ func (k *kpage) requestPage() {
 		k.job.jobMutex.Unlock()
 		k.pageMutex.Unlock()
 
-		if etag, ok := k.resp.Header["Etag"]; ok {
+		if etag, ok := resp.Header["Etag"]; ok {
 			setEtag(k.cip, etag[0], k.ids.String(), len(k.body))
 		}
-		bDownload.Add(uint64(len(k.body)))
-		k.job.BytesDownloaded.Add(uint64(len(k.body)))
-	} else if k.resp.StatusCode == 304 {
+	} else if resp.StatusCode == 304 {
 		ids, length := getEtagIds(k.cip)
 		if length == 0 {
 			killEtag(k.cip)
@@ -302,11 +302,11 @@ func (k *kpage) requestPage() {
 		k.job.BytesCached.Add(uint64(length))
 	}
 
-	if k.resp.StatusCode == 200 || k.resp.StatusCode == 304 {
-		if exp, ok := k.resp.Header["Expires"]; ok {
+	if resp.StatusCode == 200 || resp.StatusCode == 304 {
+		if exp, ok := resp.Header["Expires"]; ok {
 			k.job.updateExp(exp[0])
 		}
-		if pgs, ok := k.resp.Header["X-Pages"]; ok {
+		if pgs, ok := resp.Header["X-Pages"]; ok {
 			k.job.updatePageCount(pgs[0])
 		}
 		k.job.jobMutex.Lock()
@@ -317,8 +317,8 @@ func (k *kpage) requestPage() {
 		}
 		k.job.processPage()
 	} else {
-		log(k.cip, fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db", k.resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body)))
-		if processBackoff(k.resp.Header, k.job) {
+		log(k.cip, fmt.Sprintf("RCVD (%d) %s(%d of %d) %s&page=%d %db", resp.StatusCode, k.job.Method, k.page, k.job.Pages, k.job.URL, k.page, len(k.body)))
+		if processBackoff(resp.Header, k.job) {
 			k.job.newPage(k.page, true)
 		}
 	}

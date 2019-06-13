@@ -42,7 +42,15 @@ func log(message ...interface{}) {
 
 // centralized log function, so all output can be piped to other places
 func logf(format string, a ...interface{}) {
-	log(fmt.Sprintf(format, a...))
+	pc, fn, line, _ := runtime.Caller(1)
+	justfn := strings.Split(fn, "/")
+	out := fmt.Sprintf(format, a...)
+	fmt.Printf("%.3f [%s(%s):%d] %s\n", float64(ktime())/1000, justfn[len(justfn)-1], runtime.FuncForPC(pc).Name(), line, out)
+}
+
+// centralized log function, so all output can be piped to other places
+func logq(message string) {
+	fmt.Printf("%.3f %s\n", float64(ktime())/1000, message)
 }
 
 // time format used throughout
@@ -212,14 +220,24 @@ func max(v1 int64, v2 int64) int64 {
 	return v2
 }
 func byt(b uint64) string {
-	const unit = 1000
+	const unit = 1024
 	if b < unit {
-		return fmt.Sprintf("%d B", b)
+		return fmt.Sprintf("%db", b)
 	}
 	div, exp := int64(unit), 0
 	for n := b / unit; n >= unit; n /= unit {
 		div *= unit
 		exp++
 	}
-	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
+	return fmt.Sprintf("%s%cb", bytFormat(float64(b)/float64(div)), "kmgtpe"[exp])
+}
+func bytFormat(num float64) string {
+	if num < 9.5 {
+		return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", num), "0"), ".")
+	}
+	if num < 99.5 {
+		return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.1f", num), "0"), ".")
+	}
+	return fmt.Sprintf("%.0f", num)
+
 }

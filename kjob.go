@@ -18,9 +18,12 @@ var (
 	kjobStackMutex sync.Mutex
 	kjobQueueTick  *time.Ticker
 )
+var kjobsTicker *time.Ticker
 
 var joblog *sql.Stmt
 var jobrun *sql.Stmt
+var jobadd *sql.Stmt
+var jobget *sql.Stmt
 
 type kjobQueueStruct struct {
 	elements chan kjob
@@ -41,6 +44,20 @@ func kjobInit() {
 		log(err)
 		panic(err)
 	}
+	jobadd, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES(?,?,?,?,?,?,?)", c.Tables["jobs"].DB, c.Tables["jobs"].Name, c.Tables["jobs"].columnOrder()))
+	if err != nil {
+		log(err)
+		panic(err)
+	}
+	jobget, err = database.Prepare(fmt.Sprintf("SELECT id,method,spec,endpoint,entity,pages,`table`,nextrun FROM `%s`.`%s` WHERE err_disabled=0 ORDER BY nextrun", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
+	if err != nil {
+		log(err)
+		panic(err)
+	}
+
+	kjobsTicker = time.NewTicker(time.Second * 5)
+	go getJobsTick()
+
 	log("kjob init complete")
 }
 
@@ -58,9 +75,7 @@ func gokjobQueueTick() {
 }
 
 func createJob(method string, specnum string, endpoint string, ciString string, pages uint16, table string, nextRun int64) int {
-	stmt := safePrepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES(?,?,?,?,?,?,?)", c.Tables["jobs"].DB, c.Tables["jobs"].Name, c.Tables["jobs"].columnOrder()))
-
-	res, err := stmt.Exec(method, specnum, endpoint, ciString, pages, table, nextRun)
+	res, err := jobadd.Exec(method, specnum, endpoint, ciString, pages, table, nextRun)
 	if err != nil {
 		log(err)
 		return -1
@@ -84,20 +99,53 @@ func createJob(method string, specnum string, endpoint string, ciString string, 
 }
 
 func getJobs() {
-	stmt := safeQuery(fmt.Sprintf("SELECT id,method,spec,endpoint,entity,pages,`table`,nextrun FROM `%s`.`%s` WHERE err_disabled=0 ORDER BY id", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
-	defer stmt.Close()
+	ress, err := jobget.Query()
+	if err != nil {
+		log(err)
+		return
+	}
 	var (
 		id                                         int
 		method, specnum, endpoint, ciString, table string
 		pages                                      uint16
 		nextRun                                    int64
 	)
+	existingJobs := make(map[int]bool)
+	for it := range kjobStack {
+		existingJobs[it] = true //add all jobs to this map
+	}
+	var addedJobs int
 	var iter int64
 	stime := ktime()
-	for stmt.Next() {
-		stmt.Scan(&id, &method, &specnum, &endpoint, &ciString, &pages, &table, &nextRun)
-		newKjob(id, method, specnum, endpoint, ciString, pages, table, max((iter*20)+stime, nextRun))
+	for ress.Next() {
+		ress.Scan(&id, &method, &specnum, &endpoint, &ciString, &pages, &table, &nextRun)
+		if _, ok := kjobStack[id]; ok {
+			delete(existingJobs, id) //remove all jobs that were seen by sql
+			continue
+		}
+		newKjob(id, method, specnum, endpoint, ciString, pages, table, max((iter*50)+stime, nextRun))
+		addedJobs++
 		iter++
+	}
+	var nukedJobs int
+	for it := range existingJobs {
+		if kjobStack[it].running {
+			kjobStack[it].forceNextRun(1000 * 60 * 60 * 24 * 365) //temporarily set the nextrun for 1 year
+			kjobStack[it].stopJob(true)
+		}
+		kjobStackMutex.Lock()
+		delete(kjobStack, it)
+		kjobStackMutex.Unlock()
+		nukedJobs++
+	}
+	if addedJobs > 0 || nukedJobs > 0 {
+		logf("Added %d, removed %d Jobs", addedJobs, nukedJobs)
+	}
+}
+
+func getJobsTick() {
+	for range kjobsTicker.C {
+		getJobs()
 	}
 }
 
@@ -135,8 +183,7 @@ type kjob struct {
 	AffectedRows int64 `json:"affectedRows"` //cumlative count of affected records
 	RemovedRows  int64 `json:"removedRows"`  //cumlative count of removed records
 
-	heart    *time.Timer   //heartbeat timer
-	req      *http.Request //http request
+	heart    *time.Timer //heartbeat timer
 	running  bool
 	jobMutex sync.Mutex
 	page     map[uint16]*kpage // hashmap of [pagenumber]*kpage for all child elements
@@ -147,7 +194,11 @@ type kjob struct {
 func newKjob(id int, method string, specnum string, endpoint string, ciString string, pages uint16, table string, nextRun int64) {
 	tspec := getSpec(method, specnum, endpoint)
 	if tspec.invalid {
-		log("Invalid job received: SPEC invalid")
+		logf("Invalid job received: SPEC invalid (%s %s%s)", method, specnum, endpoint)
+		return
+	}
+	if _, ok := c.Tables[table]; !ok {
+		logf("Invalid job received: table \"%s\" invalid", table)
 		return
 	}
 	var entity map[string]string
@@ -159,8 +210,9 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 		if sentity, ok = entity["corporation_id"]; !ok {
 			if sentity, ok = entity["structure_id"]; !ok {
 				if sentity, ok = entity["character_id"]; !ok {
-					log("Invalid job received: unable to resolve entity")
-					return
+					logf("Invalid job received: unable to resolve entity (%s %s%s) %s", method, specnum, endpoint, ciString)
+					sentity = "0"
+					//return
 				}
 				owner = sentity
 			} else {
@@ -175,7 +227,10 @@ func newKjob(id int, method string, specnum string, endpoint string, ciString st
 
 	tokenid, ok = entity["token_id"]
 	if !ok {
-		tokenid, _ = entity["character_id"]
+		tokenid, ok = entity["character_id"]
+		if !ok {
+			tokenid = "0"
+		}
 	}
 	tid, _ := strconv.Atoi(tokenid)
 	tmp := kjob{
@@ -231,6 +286,10 @@ func (k *kjob) start() {
 }
 func (k *kjob) stopJob(failed bool) {
 	k.jobMutex.Lock()
+	for it := range k.page {
+		k.page[it].destroy()
+		delete(k.page, it)
+	}
 	if failed {
 		k.table.handleEndFail(k)
 	} else {
@@ -240,11 +299,6 @@ func (k *kjob) stopJob(failed bool) {
 		jobrun.Exec(k.NextRun, k.id)
 	}
 	k.heart.Stop()
-	for it := range k.page {
-		k.page[it].destroy()
-		delete(k.page, it)
-	}
-	k.running = false
 	k.Expires = 0
 	k.Pages = k.PullType
 	k.PagesProcessed = 0
@@ -258,6 +312,7 @@ func (k *kjob) stopJob(failed bool) {
 	k.updJob.Reset()
 	k.RecordsIns = 0
 	k.RecordsUpd = 0
+	k.running = false
 	k.jobMutex.Unlock()
 }
 func (k *kjob) run() {
@@ -276,22 +331,22 @@ func (k *kjob) queuePages() {
 	k.jobMutex.Unlock()
 }
 func (k *kjob) requestHead() {
-	var err error
-	if backoff {
+	for backoff && k.running {
 		time.Sleep(5 * time.Second)
-		go k.requestHead()
+	}
+	if !k.running {
 		return
 	}
-	k.req, err = http.NewRequest("HEAD", c.EsiURL+k.URL, nil)
+	req, err := http.NewRequest("HEAD", c.EsiURL+k.URL, nil)
 	if err != nil {
 		log(k.CI, err)
 		return
 	}
 
 	if k.spec.security != "" {
-		k.req.Header.Add("Authorization", "Bearer "+getAccessToken(k.TokenID, k.spec.security))
+		req.Header.Add("Authorization", "Bearer "+getAccessToken(k.TokenID, k.spec.security))
 	}
-	resp, err := client.Do(k.req)
+	resp, err := client.Do(req)
 	if err != nil {
 		log(k.CI, err)
 		k.stopJob(true)

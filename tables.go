@@ -161,6 +161,8 @@ func tablesInit() {
 	tablesInitorders()
 	tablesInitcontracts()
 	tablesInitskills()
+	tablesInitsovereignty()
+	tablesInitcorpMembers()
 	for it := range c.Tables {
 		safeExec(c.Tables[it].create())
 		logf("Initialized table %s", it)

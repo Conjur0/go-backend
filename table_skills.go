@@ -42,9 +42,21 @@ func tablesInitskills() {
 		}
 		k.recs = int64(len(skill.Skills))
 		k.ins.Grow(len(skill.Skills) * 60)
+		k.ids.Grow(len(skill.Skills) * 10)
 
 		for it := range skill.Skills {
-			if _, ok := k.job.sqldata[skill.Skills[it].SkillID]; !ok {
+			fmt.Fprintf(&k.ids, "%s%d", k.idscomma, skill.Skills[it].SkillID)
+			k.idscomma = ","
+			if ord, ok := k.job.sqldata[skill.Skills[it].SkillID]; ok {
+				if ord != skill.Skills[it].ActiveSkillLevel {
+					fmt.Fprintf(&k.ins, "%s(%s,%d,%d,%d,%d)", k.inscomma, k.job.Source, skill.Skills[it].SkillID, skill.Skills[it].SkillpointsInSkill, skill.Skills[it].ActiveSkillLevel, skill.Skills[it].TrainedSkillLevel)
+					k.inscomma = ","
+					k.insrecs++
+				} else {
+					// exists in database and order has not changed, no-op
+				}
+				delete(k.job.sqldata, uint64(skill.Skills[it].SkillID)) //remove matched items from the map
+			} else {
 				fmt.Fprintf(&k.ins, "%s(%s,%d,%d,%d,%d)", k.inscomma, k.job.Source, skill.Skills[it].SkillID, skill.Skills[it].SkillpointsInSkill, skill.Skills[it].ActiveSkillLevel, skill.Skills[it].TrainedSkillLevel)
 				k.inscomma = ","
 				k.insrecs++
