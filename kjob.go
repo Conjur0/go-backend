@@ -37,6 +37,7 @@ func kjobInit() {
 	joblog, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", c.Tables["job_log"].DB, c.Tables["job_log"].Name, c.Tables["job_log"].columnOrder()))
 	if err != nil {
 		log(err)
+		log(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", c.Tables["job_log"].DB, c.Tables["job_log"].Name, c.Tables["job_log"].columnOrder()))
 		panic(err)
 	}
 	jobrun, err = database.Prepare(fmt.Sprintf("UPDATE `%s`.`%s` SET nextRun=? WHERE id=?", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
