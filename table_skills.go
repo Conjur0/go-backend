@@ -51,7 +51,6 @@ func tablesInitskills() {
 				k.insrecs++
 			}
 		}
-		logf("done with sqldata:%d allsqldata:%d inslen:%d", len(k.job.sqldata), len(k.job.allsqldata), k.ins.Len())
 		k.pageMutex.Unlock()
 		k.job.jobMutex.Unlock()
 		return nil

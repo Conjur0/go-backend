@@ -26,43 +26,64 @@ func getMetric(obj string) int {
 	return -1
 }
 
-type metric struct {
+type metricu struct {
+	sync.Mutex
 	_val uint64
-	lock sync.Mutex
 }
 
-func (metric *metric) Get() uint64 {
-	metric.lock.Lock()
-	defer metric.lock.Unlock()
-	return metric._val
+func (metricu *metricu) Get() uint64 {
+	metricu.Lock()
+	defer metricu.Unlock()
+	return metricu._val
 }
-func (metric *metric) Set(val uint64) {
-	metric.lock.Lock()
-	defer metric.lock.Unlock()
-	metric._val = val
+func (metricu *metricu) Set(val uint64) {
+	metricu.Lock()
+	metricu._val = val
+	metricu.Unlock()
 }
-func (metric *metric) Add(val uint64) {
-	metric.lock.Lock()
-	defer metric.lock.Unlock()
-	metric._val += val
+func (metricu *metricu) Add(val uint64) {
+	metricu.Lock()
+	metricu._val += val
+	metricu.Unlock()
 }
-func (metric *metric) Sub(val uint64) {
-	metric.lock.Lock()
-	defer metric.lock.Unlock()
-	metric._val -= val
+func (metricu *metricu) Sub(val uint64) {
+	metricu.Lock()
+	metricu._val -= val
+	metricu.Unlock()
 }
-func (metric *metric) Reset() {
-	metric.lock.Lock()
-	defer metric.lock.Unlock()
-	metric._val = 0
+func (metricu *metricu) Reset() {
+	metricu.Lock()
+	metricu._val = 0
+	metricu.Unlock()
 }
-func (metric *metric) Inc() {
-	metric.lock.Lock()
-	defer metric.lock.Unlock()
-	metric._val++
+func (metricu *metricu) Inc() {
+	metricu.Lock()
+	metricu._val++
+	metricu.Unlock()
 }
-func (metric *metric) Dec() {
-	metric.lock.Lock()
-	defer metric.lock.Unlock()
-	metric._val--
+func (metricu *metricu) Dec() {
+	metricu.Lock()
+	metricu._val--
+	metricu.Unlock()
+}
+
+type metrict struct {
+	sync.Mutex
+	_val int64
+}
+
+func (metrict *metrict) Reset() {
+	metrict.Lock()
+	metrict._val = 0
+	metrict.Unlock()
+}
+func (metrict *metrict) Get() int64 {
+	metrict.Lock()
+	defer metrict.Unlock()
+	return metrict._val
+}
+func (metrict *metrict) Set(val int64) {
+	metrict.Lock()
+	metrict._val = val
+	metrict.Unlock()
 }

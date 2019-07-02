@@ -17,36 +17,36 @@ import (
 var kpageQueue *kpageQueueS
 var kpageQueueTick *time.Ticker
 
-var errorRemain metric
+var errorRemain metricu
 var errorResetTimer *time.Timer
 var backoffTimer *time.Timer
 
 var backoff = false
 var queueTicker *time.Ticker
 
-var curInFlight metric
+var curInFlight metricu
 var lastInFlight uint64
 var inFlight = make(map[uint64]*kpage, c.MaxInFlight)
 var inFlightMutex sync.Mutex
 
-var pagesFinished metric
+var pagesFinished metricu
 var lastFinished uint64
 
 var lastSQL uint64
 
-var bCached metric
-var bDownload metric
+var bCached metricu
+var bDownload metricu
 
 type kpageQueueS struct {
 	elements chan *kpage
-	len      metric
+	len      metricu
 }
 type kpage struct {
 	job       *kjob
 	page      uint16
 	cip       string
 	body      []byte
-	running   int64
+	running   metrict
 	dead      bool
 	pageMutex sync.Mutex
 	ids       strings.Builder
@@ -79,18 +79,18 @@ func gokpageQueueTick() {
 		for !backoff && kpageQueue.len.Get() > 0 && (curInFlight.Get() < c.MaxInFlight) {
 			qitem := kpageQueue.Pop()
 			if qitem.dead == false {
-				var err uint64
+				var availableSlot uint64
 				inFlightMutex.Lock()
 				for it := uint64(0); it < c.MaxInFlight; it++ {
 					if inFlight[it].dead {
-						err = it
+						availableSlot = it
 						break
 					}
 				}
 				curInFlight.Inc()
-				inFlight[err] = qitem
-				inFlight[err].running = ctime.UnixNano() / int64(time.Millisecond)
-				go inFlight[err].requestPage()
+				inFlight[availableSlot] = qitem
+				inFlight[availableSlot].running.Set(ctime.UnixNano() / int64(time.Millisecond))
+				go inFlight[availableSlot].requestPage()
 				inFlightMutex.Unlock()
 			}
 		}
@@ -148,7 +148,7 @@ func queueLog() {
 				if inFlight[it].dead {
 					b.WriteString(" ****")
 				} else {
-					fmt.Fprintf(&b, " %4d", timenow-inFlight[it].running)
+					fmt.Fprintf(&b, " %4d", timenow-inFlight[it].running.Get())
 				}
 			}
 			inFlightMutex.Unlock()
@@ -171,8 +171,8 @@ func (k *kjob) newPage(page uint16, requeue bool) {
 }
 
 func (k *kpage) destroy() {
-	if k.running > 0 {
-		k.running = 0
+	if k.running.Get() > 0 {
+		k.running.Reset()
 		curInFlight.Dec()
 	}
 	k.insrecs = 0

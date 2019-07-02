@@ -168,8 +168,8 @@ type kjob struct {
 
 	insJob          strings.Builder // builder of records pending insert
 	RecordsIns      int64           `json:"records_ins"`     // count of records pending insert
-	BytesDownloaded metric          `json:"bytesDownloaded"` //total bytes downloaded
-	BytesCached     metric          `json:"bytesCached"`     //total bytes cached
+	BytesDownloaded metricu         `json:"bytesDownloaded"` //total bytes downloaded
+	BytesCached     metricu         `json:"bytesCached"`     //total bytes cached
 
 	PullType       uint16 `json:"pullType"`
 	Pages          uint16 `json:"pages"`          //Pages: 0, 1
