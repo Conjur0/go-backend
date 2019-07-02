@@ -49,6 +49,7 @@ func tablesInitcontracts() {
 		k.ids.Grow(len(contract) * 10)
 
 		for it := range contract {
+			k.records++
 			if contract[it].Status == "" {
 				contract[it].Status = "outstanding"
 			}
@@ -59,14 +60,17 @@ func tablesInitcontracts() {
 			k.idscomma = ","
 			if ord, ok := k.job.sqldata[uint64(contract[it].ContractID)]; ok {
 				if ord != contractStatus[contract[it].Status.ifnull()] {
+					k.recordsChanged++
 					fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,%s,%s,%s,%f)", k.inscomma, k.job.Source, k.job.Owner, contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability.ifnull(), contract[it].Buyout, contract[it].Collateral, contract[it].ContractID, contract[it].DateAccepted.toSQLDate(), contract[it].DateCompleted.toSQLDate(), contract[it].DateExpired.toSQLDate(), contract[it].DateIssued.toSQLDate(), contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(), contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward, contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
 					k.inscomma = ","
 					k.insrecs++
 				} else {
+					k.recordsStale++
 					// exists in database and order has not changed, no-op
 				}
 				delete(k.job.sqldata, uint64(contract[it].ContractID)) //remove matched items from the map
 			} else {
+				k.recordsNew++
 				k.job.allsqldata[uint64(contract[it].ContractID)] = contractStatus[contract[it].Status.ifnull()]
 				fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%f,%f,%d,%s,%s,%s,%s,%d,%d,%d,%d,%d,%f,%f,%d,%s,%s,%s,%f)", k.inscomma, k.job.Source, k.job.Owner, contract[it].AcceptorID, contract[it].AssigneeID, contract[it].Availability.ifnull(), contract[it].Buyout, contract[it].Collateral, contract[it].ContractID, contract[it].DateAccepted.toSQLDate(), contract[it].DateCompleted.toSQLDate(), contract[it].DateExpired.toSQLDate(), contract[it].DateIssued.toSQLDate(), contract[it].DaysToComplete, contract[it].EndLocationID, contract[it].ForCorporation.toSQL(), contract[it].IssuerCorporationID, contract[it].IssuerID, contract[it].Price, contract[it].Reward, contract[it].StartLocationID, contract[it].Status.ifnull(), contract[it].Title.escape(), contract[it].Type.ifnull(), contract[it].Volume)
 				k.inscomma = ","

@@ -42,19 +42,23 @@ type kpageQueueS struct {
 	len      metricu
 }
 type kpage struct {
-	job       *kjob
-	page      uint16
-	cip       string
-	body      []byte
-	running   metrict
-	dead      bool
-	pageMutex sync.Mutex
-	ids       strings.Builder
-	ins       strings.Builder
-	recs      int64
-	insrecs   int64
-	inscomma  string
-	idscomma  string
+	job            *kjob
+	page           uint16
+	cip            string
+	body           []byte
+	running        metrict
+	dead           bool
+	pageMutex      sync.Mutex
+	ids            strings.Builder
+	ins            strings.Builder
+	recs           int64
+	insrecs        int64
+	inscomma       string
+	idscomma       string
+	records        uint64
+	recordsStale   uint64
+	recordsNew     uint64
+	recordsChanged uint64
 }
 
 func (kpageQueueS *kpageQueueS) Push(element *kpage) {
@@ -289,6 +293,7 @@ func (k *kpage) requestPage() {
 			k.job.jobMutex.Lock()
 			ids := strings.Split(ids, ",")
 			k.recs = int64(len(ids))
+			k.recordsStale += uint64(k.recs)
 			var id int
 			for it := range ids {
 				id, _ = strconv.Atoi(ids[it])
@@ -320,6 +325,10 @@ func (k *kpage) requestPage() {
 		k.job.jobMutex.Lock()
 		k.job.Records += k.recs
 		k.job.jobMutex.Unlock()
+		k.job.records.Add(k.records)
+		k.job.recordsChanged.Add(k.recordsChanged)
+		k.job.recordsNew.Add(k.recordsNew)
+		k.job.recordsStale.Add(k.recordsStale)
 		if k.dead {
 			return
 		}

@@ -28,11 +28,14 @@ func tablesInitprices() {
 		k.ids.Grow(len(price) * 10)
 
 		for it := range price {
+			k.records++
 			fmt.Fprintf(&k.ids, "%s%d", k.idscomma, price[it].TypeID)
 			k.idscomma = ","
 			if _, ok := k.job.sqldata[price[it].TypeID]; ok {
+				k.recordsChanged++
 				delete(k.job.sqldata, uint64(price[it].TypeID)) //remove matched items from the map
 			} else {
+				k.recordsNew++
 				k.job.allsqldata[price[it].TypeID] = 1
 			}
 			fmt.Fprintf(&k.ins, "%s(%d,%f,%f)", k.inscomma, price[it].TypeID, price[it].AveragePrice, price[it].AdjustedPrice)

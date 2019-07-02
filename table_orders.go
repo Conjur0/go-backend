@@ -36,18 +36,22 @@ func tablesInitorders() {
 		k.ids.Grow(len(order) * 10)
 
 		for it := range order {
+			k.records++
 			fmt.Fprintf(&k.ids, "%s%d", k.idscomma, order[it].OrderID)
 			k.idscomma = ","
 			if ord, ok := k.job.sqldata[order[it].OrderID]; ok {
 				if ord != order[it].Issued.toktime() {
+					k.recordsChanged++
 					fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", k.inscomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
 					k.inscomma = ","
 					k.insrecs++
 				} else {
+					k.recordsStale++
 					// exists in database and order has not changed, no-op
 				}
 				delete(k.job.sqldata, order[it].OrderID) //remove matched items from the map
 			} else {
+				k.recordsNew++
 				k.job.allsqldata[order[it].OrderID] = order[it].Issued.toktime()
 				fmt.Fprintf(&k.ins, "%s(%s,%s,%d,%d,%s,%d,%d,%d,%f,'%s',%d,%d,%d)", k.inscomma, k.job.Source, k.job.Owner, order[it].Duration, order[it].IsBuyOrder.toSQL(), order[it].Issued.toSQLDate(), order[it].LocationID, order[it].MinVolume, order[it].OrderID, order[it].Price, order[it].Range, order[it].TypeID, order[it].VolumeRemain, order[it].VolumeTotal)
 				k.inscomma = ","

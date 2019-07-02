@@ -29,18 +29,22 @@ func tablesInitsovereignty() {
 		k.ids.Grow(len(sovereignty) * 10)
 
 		for it := range sovereignty {
+			k.records++
 			fmt.Fprintf(&k.ids, "%s%d", k.idscomma, sovereignty[it].SystemID)
 			k.idscomma = ","
 			if ord, ok := k.job.sqldata[sovereignty[it].SystemID]; ok {
 				if ord != sovereignty[it].CorporationID {
+					k.recordsChanged++
 					fmt.Fprintf(&k.ins, "%s(%d,%d,%d,%d)", k.inscomma, sovereignty[it].SystemID, sovereignty[it].AllianceID, sovereignty[it].CorporationID, sovereignty[it].FactionID)
 					k.inscomma = ","
 					k.insrecs++
 				} else {
+					k.recordsStale++
 					// exists in database and order has not changed, no-op
 				}
 				delete(k.job.sqldata, uint64(sovereignty[it].SystemID)) //remove matched items from the map
 			} else {
+				k.recordsNew++
 				k.job.allsqldata[sovereignty[it].SystemID] = sovereignty[it].CorporationID
 				fmt.Fprintf(&k.ins, "%s(%d,%d,%d,%d)", k.inscomma, sovereignty[it].SystemID, sovereignty[it].AllianceID, sovereignty[it].CorporationID, sovereignty[it].FactionID)
 				k.inscomma = ","

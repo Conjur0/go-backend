@@ -34,7 +34,7 @@ func kjobInit() {
 	kjobQueueTick = time.NewTicker(500 * time.Millisecond)
 	go gokjobQueueTick()
 	var err error
-	joblog, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (?,?,?,?,?,?,?,?,?)", c.Tables["job_log"].DB, c.Tables["job_log"].Name, c.Tables["job_log"].columnOrder()))
+	joblog, err = database.Prepare(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", c.Tables["job_log"].DB, c.Tables["job_log"].Name, c.Tables["job_log"].columnOrder()))
 	if err != nil {
 		log(err)
 		panic(err)
@@ -180,6 +180,11 @@ type kjob struct {
 	AffectedRows int64 `json:"affectedRows"` //cumlative count of affected records
 	RemovedRows  int64 `json:"removedRows"`  //cumlative count of removed records
 
+	records        metricu
+	recordsStale   metricu
+	recordsNew     metricu
+	recordsChanged metricu
+
 	heart      *time.Timer //heartbeat timer
 	running    bool
 	jobMutex   sync.Mutex
@@ -297,7 +302,12 @@ func (k *kjob) stopJob(failed bool) {
 			k.RemovedRows += safeExec(fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE %s=%s AND %s IN (%s)", k.table.DB, k.table.Name, k.table.JobKey, k.Source, k.table.Changed, b.String()))
 		}
 		k.sqldata = make(map[uint64]uint64)
-		joblog.Exec(ktime(), k.id, k.PagesProcessed, k.Records, k.AffectedRows, k.RemovedRows, getMetric(k.CI), k.BytesDownloaded.Get(), k.BytesCached.Get())
+		joblog.Exec(ktime(), k.id, k.PagesProcessed, k.Records, k.AffectedRows, k.RemovedRows,
+			k.records.Get(),
+			k.recordsNew.Get(),
+			k.recordsChanged.Get(),
+			k.recordsStale.Get(),
+			getMetric(k.CI), k.BytesDownloaded.Get(), k.BytesCached.Get())
 		jobrun.Exec(k.NextRun, k.id)
 	}
 	k.heart.Stop()
@@ -312,6 +322,12 @@ func (k *kjob) stopJob(failed bool) {
 	k.BytesDownloaded.Reset()
 	k.insJob.Reset()
 	k.RecordsIns = 0
+
+	k.records.Reset()
+	k.recordsChanged.Reset()
+	k.recordsNew.Reset()
+	k.recordsStale.Reset()
+
 	k.running = false
 	k.jobMutex.Unlock()
 }
@@ -417,7 +433,6 @@ func (k *kjob) processPage() {
 	k.jobMutex.Lock()
 	k.PagesProcessed++
 	pagesFinished.Inc()
-
 	if (k.insJob.Len() >= 500000) || ((k.insJob.Len() > 0) && k.PagesProcessed == k.Pages) {
 		k.AffectedRows += k.table.handleWriteIns(k)
 		k.RecordsIns = 0

@@ -22,14 +22,17 @@ func tablesInitcorpMembers() {
 		k.ids.Grow(len(corpMember) * 10)
 
 		for it := range corpMember {
+			k.records++
 			fmt.Fprintf(&k.ids, "%s%d", k.idscomma, corpMember[it])
 			k.idscomma = ","
 			if _, ok := k.job.sqldata[corpMember[it]]; !ok {
+				k.recordsNew++
 				k.job.allsqldata[corpMember[it]] = 1
 				fmt.Fprintf(&k.ins, "%s(%s,%d)", k.inscomma, k.job.Source, corpMember[it])
 				k.inscomma = ","
 				k.insrecs++
 			} else {
+				k.recordsStale++
 				delete(k.job.sqldata, corpMember[it]) //remove matched items from the map
 			}
 		}
