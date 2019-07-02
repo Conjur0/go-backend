@@ -72,11 +72,6 @@ type metrict struct {
 	_val int64
 }
 
-func (metrict *metrict) Reset() {
-	metrict.Lock()
-	metrict._val = 0
-	metrict.Unlock()
-}
 func (metrict *metrict) Get() int64 {
 	metrict.Lock()
 	defer metrict.Unlock()

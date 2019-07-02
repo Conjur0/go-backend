@@ -87,10 +87,12 @@ func gokpageQueueTick() {
 						break
 					}
 				}
-				curInFlight.Inc()
 				inFlight[availableSlot] = qitem
-				inFlight[availableSlot].running.Set(ctime.UnixNano() / int64(time.Millisecond))
+				inFlight[availableSlot].running.Lock()
+				curInFlight.Inc()
+				inFlight[availableSlot].running._val = ctime.UnixNano() / int64(time.Millisecond)
 				go inFlight[availableSlot].requestPage()
+				inFlight[availableSlot].running.Unlock()
 				inFlightMutex.Unlock()
 			}
 		}
@@ -171,10 +173,12 @@ func (k *kjob) newPage(page uint16, requeue bool) {
 }
 
 func (k *kpage) destroy() {
-	if k.running.Get() > 0 {
-		k.running.Reset()
+	k.running.Lock()
+	if k.running._val > 0 {
+		k.running._val = 0
 		curInFlight.Dec()
 	}
+	k.running.Unlock()
 	k.insrecs = 0
 	k.ins.Reset()
 	k.ids.Reset()
