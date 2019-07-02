@@ -86,7 +86,7 @@ func createJob(method string, specnum string, endpoint string, ciString string, 
 		return -1
 	}
 	if aff < 1 {
-		logf("no rows inserted")
+		log("no rows inserted")
 		return -1
 	}
 	id, err := res.LastInsertId()
