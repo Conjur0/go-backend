@@ -294,6 +294,7 @@ func (k *kpage) requestPage() {
 			ids := strings.Split(ids, ",")
 			k.recs = int64(len(ids))
 			k.recordsStale += uint64(k.recs)
+			k.records = k.recordsStale
 			var id int
 			for it := range ids {
 				id, _ = strconv.Atoi(ids[it])
