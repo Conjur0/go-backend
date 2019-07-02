@@ -1,0 +1,13 @@
+#!/bin/bash
+PIDFILE="/stor/go/src/github.com/Conjur0/go-backend/go-backend.pid"
+LOGFILE="/stor/go/src/github.com/Conjur0/go-backend/go-backend.`date +'%Y-%m-%d'`.log"
+ERRFILE="/stor/go/src/github.com/Conjur0/go-backend/go-backend.err"
+
+git add . && git commit -m "changes" && git push origin master
+
+if [ -e "${PIDFILE}" ] && (ps -u $(whoami) -opid= | grep -P "^\s*$(cat ${PIDFILE})$" &> /dev/null); then
+  kill -9 `cat ${PIDFILE}`
+  echo "Killed"
+fi
+
+go build && ./go-backend.sh

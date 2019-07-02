@@ -6,4 +6,3 @@ crontab
 go-backend.*.log
 go-backend.err
 go-backend.pid
-go-restart
