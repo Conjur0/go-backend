@@ -5,6 +5,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -15,9 +16,9 @@ var database *sql.DB
 // connect to SQL
 func sqlInit() {
 	var err error
-
-	log("connect to SQL, user:" + c.Mariadb.User)
-	database, err = sql.Open("mysql", c.Mariadb.User+":"+c.Mariadb.Pass+"@unix(/var/run/mysqld/mysqld.sock)/?maxAllowedPacket=0")
+	host, _ := os.Hostname()
+	log("connect to SQL: " + host)
+	database, err = sql.Open("mysql", c.SQL[host])
 	if err != nil {
 		panic("Unable to connect to SQL!")
 	}

@@ -63,7 +63,8 @@ type table struct {
 	PrimaryKey     string               `json:"primary_key,omitempty"` //Primary BTREE Index (multiple fields separated with :)
 	Changed        string               `json:"changed,omitempty"`     //what to poll to see if the record needs to be updated (uint64)
 	ChangedKey     string               `json:"changed_key,omitempty"` //what to poll to see if the record needs to be updated (uint64)
-	JobKey         string               `json:"job_key,omitempty"`     //what ties this row to the queried entity/source
+	JobKey         string               `json:"job_key,omitempty"`     //rows deleted with this column == k.Source
+	SourceKey      string               `json:"source_key"`            //rows selected with these columns (separated with :) == k.Source (not set means global (all records))
 	Keys           map[string]string    `json:"keys,omitempty"`        //Other Indexes (multiple fields separated with :)
 	UniqueKeys     map[string]string    `json:"unique_keys,omitempty"` //Other other indexes (multiple fields separated with :)
 	ColumnOrder    []string             `json:"column_order,omitempty"`
@@ -140,11 +141,19 @@ func (t *table) create() string {
 
 func (t *table) getAllData(k *kjob) {
 	if len(k.allsqldata) == 0 {
-		res := safeQuery(fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` WHERE %s=%s", t.DB, t.Name, t.JobKey, k.Source))
+		wheres := strings.Split(t.SourceKey, ":")
+		if len(wheres[0]) == 0 {
+			wheres[0] = "TRUE"
+		} else {
+			for it := range wheres {
+				wheres[it] = fmt.Sprintf("`%s`='%s'", wheres[it], k.Source)
+			}
+		}
+		res := safeQuery(fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` WHERE %s", t.DB, t.Name, strings.Join(wheres, " OR ")))
 		defer res.Close()
 		var numRecords int
 		res.Scan(&numRecords)
-		ress := safeQuery(fmt.Sprintf("SELECT %s,%s FROM `%s`.`%s` WHERE %s=%s", t.Changed, t.ChangedKey, t.DB, t.Name, t.JobKey, k.Source))
+		ress := safeQuery(fmt.Sprintf("SELECT %s,%s FROM `%s`.`%s` WHERE %s", t.Changed, t.ChangedKey, t.DB, t.Name, strings.Join(wheres, " OR ")))
 		k.allsqldata = make(map[uint64]uint64, numRecords)
 		defer ress.Close()
 		var key, data uint64
@@ -167,6 +176,8 @@ func tablesInit() {
 	tablesInitskills()
 	tablesInitsovereignty()
 	tablesInitcorpMembers()
+	tablesInitprices()
+	tablesInitassets()
 	for it := range c.Tables {
 		safeExec(c.Tables[it].create())
 		logf("Initialized table %s", it)

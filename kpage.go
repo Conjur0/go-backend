@@ -135,21 +135,20 @@ func kpageInit() {
 
 func queueLog() {
 	for range queueTicker.C {
-		if !backoff && (kpageQueue.len.Get() > 0 || lastSQL != sQLProcessing.Get() || lastFinished != pagesFinished.Get() || lastInFlight != curInFlight.Get()) {
+		if !backoff && (kpageQueue.len.Get() > 0 || lastFinished != pagesFinished.Get() || lastInFlight != curInFlight.Get()) {
 			timenow := ktime()
 			lastFinished = pagesFinished.Get()
 			lastInFlight = curInFlight.Get()
-			lastSQL = sQLProcessing.Get()
 			var b strings.Builder
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
-			fmt.Fprintf(&b, "<QUEUE> Alloc:%7s Sys:%7s Objects:%6s Cached:%7s DL:%7s Q:%6d Done:%6s SQL:%d Hot(%2d/%d) ", byt(m.Alloc), byt(m.Sys), bytn(m.HeapObjects), byt(bCached.Get()), byt(bDownload.Get()), kpageQueue.len.Get(), bytn(lastFinished), lastSQL, lastInFlight, c.MaxInFlight)
+			fmt.Fprintf(&b, "<Q> A:%7s OS:%7s Cache:%7s DL:%7s Q:%5d Done:%6s Hot(%2d)", byt(m.Alloc), byt(m.Sys), byt(bCached.Get()), byt(bDownload.Get()), kpageQueue.len.Get(), bytn(lastFinished), lastInFlight)
 			inFlightMutex.Lock()
 			for it := uint64(0); it < c.MaxInFlight; it++ {
 				if inFlight[it].dead {
-					b.WriteString("**** ")
+					b.WriteString(" ****")
 				} else {
-					fmt.Fprintf(&b, "%4d ", timenow-inFlight[it].running)
+					fmt.Fprintf(&b, " %4d", timenow-inFlight[it].running)
 				}
 			}
 			inFlightMutex.Unlock()
@@ -173,8 +172,8 @@ func (k *kjob) newPage(page uint16, requeue bool) {
 
 func (k *kpage) destroy() {
 	if k.running > 0 {
-		curInFlight.Dec()
 		k.running = 0
+		curInFlight.Dec()
 	}
 	k.insrecs = 0
 	k.ins.Reset()
@@ -207,7 +206,12 @@ func (k *kpage) requestPage() {
 		req.Header.Add("If-None-Match", etaghdr)
 	}
 	if k.job.spec.security != "" {
-		req.Header.Add("Authorization", "Bearer "+getAccessToken(k.job.TokenID, k.job.spec.security))
+		tok := getAccessToken(k.job.TokenID, k.job.spec.security)
+		if len(tok) == 0 {
+			k.job.errDisable()
+			return
+		}
+		req.Header.Add("Authorization", "Bearer "+tok)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -341,12 +345,7 @@ func processBackoff(hdr http.Header, k *kjob) (enabled bool) {
 		}
 		if k.SeqErrors >= c.ErrDisableThreshold {
 			log(k.CI, "ERR_DISABLE")
-			stmt := safePrepare(fmt.Sprintf("UPDATE `%s`.`%s` set err_disabled=1 WHERE id=?", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
-			stmt.Exec(k.id)
-			k.stopJob(true)
-			kjobStackMutex.Lock()
-			delete(kjobStack, k.id)
-			kjobStackMutex.Unlock()
+			k.errDisable()
 			return false
 		}
 		k.heart.Reset(40 * time.Second)
@@ -354,4 +353,14 @@ func processBackoff(hdr http.Header, k *kjob) (enabled bool) {
 
 	}
 	return true
+}
+func (k *kjob) errDisable() {
+	log(k.CI, "ERR_DISABLE")
+	stmt := safePrepare(fmt.Sprintf("UPDATE `%s`.`%s` set err_disabled=1 WHERE id=?", c.Tables["jobs"].DB, c.Tables["jobs"].Name))
+	stmt.Exec(k.id)
+	stmt.Close()
+	k.stopJob(true)
+	kjobStackMutex.Lock()
+	delete(kjobStack, k.id)
+	kjobStackMutex.Unlock()
 }

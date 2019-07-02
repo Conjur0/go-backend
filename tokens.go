@@ -101,7 +101,7 @@ func getAccessToken(characterID uint64, scope string) (accessToken string) {
 	req, err := http.NewRequest("POST", c.Oauth["CCP"].TokenURL, bytes.NewBuffer(data))
 	if err != nil {
 		logf("error creating request for %d", characterID)
-		return ""
+		return "SSO DOWN, WHAT DO"
 	}
 
 	req.Header.Set("User-Agent", "karkinos.ga, POC: Yonneh in #esi")
@@ -111,22 +111,27 @@ func getAccessToken(characterID uint64, scope string) (accessToken string) {
 	resp, err := client.Do(req)
 	if err != nil {
 		logf("error sending request for %d", characterID)
-		return ""
+		return "SSO DOWN, WHAT DO"
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		logf("error %s from CCP for %d", resp.Status, characterID)
 		return ""
+	}
+	if resp.StatusCode != 200 {
+		logf("error %s from CCP for %d", resp.Status, characterID)
+		return "SSO DOWN, WHAT DO"
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		logf("error reading request for %d", characterID)
-		return ""
+		return "SSO DOWN, WHAT DO"
 	}
 	var responseData tokenResponse
 	if err := json.Unmarshal(body, &responseData); err != nil {
 		logf("error Unmarshaling token for %d", characterID)
-		return ""
+		return "SSO DOWN, WHAT DO"
 	}
 	tokens[characterID].AccessToken = responseData.AccessToken
 	tokens[characterID].Expires = (ktime() + (responseData.ExpiresIn * 1000)) - 10000
@@ -135,12 +140,10 @@ func getAccessToken(characterID uint64, scope string) (accessToken string) {
 	res, err := stmt.Exec(tokens[characterID].AccessToken, tokens[characterID].Expires, characterID)
 	if err != nil {
 		logf("error updating SQL for %d", characterID)
-		return ""
 	}
 	aff, _ := res.RowsAffected()
 	if aff != 1 {
 		logf("error updating SQL for %d, no rows affected", characterID)
-		return ""
 	}
 	// log( fmt.Sprintf("New token returned for %d", characterID))
 	return tokens[characterID].AccessToken

@@ -25,8 +25,6 @@ var jobrun *sql.Stmt
 var jobadd *sql.Stmt
 var jobget *sql.Stmt
 
-var sQLProcessing metric
-
 type kjobQueueStruct struct {
 	elements chan kjob
 }
@@ -346,7 +344,12 @@ func (k *kjob) requestHead() {
 	}
 
 	if k.spec.security != "" {
-		req.Header.Add("Authorization", "Bearer "+getAccessToken(k.TokenID, k.spec.security))
+		tok := getAccessToken(k.TokenID, k.spec.security)
+		if len(tok) == 0 {
+			k.errDisable()
+			return
+		}
+		req.Header.Add("Authorization", "Bearer "+tok)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -411,8 +414,6 @@ func (k *kjob) updatePageCount(pages string) {
 	}
 }
 func (k *kjob) processPage() {
-	sQLProcessing.Inc()
-	defer sQLProcessing.Dec()
 	k.jobMutex.Lock()
 	k.PagesProcessed++
 	pagesFinished.Inc()

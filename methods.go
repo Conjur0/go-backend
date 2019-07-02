@@ -96,7 +96,7 @@ type conf struct {
 	BackoffThreshold    int               `json:"backoff_threshold"`
 	BackoffSeconds      time.Duration     `json:"backoff_seconds"`
 	ErrDisableThreshold int64             `json:"err_disable_threshold"`
-	Mariadb             mariadb           `json:"mariadb"`
+	SQL                 map[string]string `json:"sql"`
 	Oauth               map[string]oauth  `json:"oauth"`
 	Tables              map[string]*table `json:"tables"`
 }
@@ -109,10 +109,6 @@ func initClient() {
 	}
 }
 
-type mariadb struct {
-	User string `json:"user"`
-	Pass string `json:"pass"`
-}
 type oauth struct {
 	ClientID     string `json:"clientID"`
 	ClientSecret string `json:"clientSecret"`
