@@ -1,7 +1,5 @@
 #!/bin/bash
 PIDFILE="/stor/go/src/github.com/Conjur0/go-backend/go-backend.pid"
-LOGFILE="/stor/go/src/github.com/Conjur0/go-backend/go-backend.`date +'%Y-%m-%d'`.log"
-ERRFILE="/stor/go/src/github.com/Conjur0/go-backend/go-backend.err"
 
 git add . && git commit -m "changes" && git push origin master
 
