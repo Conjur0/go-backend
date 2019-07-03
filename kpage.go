@@ -278,7 +278,7 @@ func (k *kpage) requestPage() {
 		k.pageMutex.Unlock()
 
 		if etag, ok := resp.Header["Etag"]; ok {
-			setEtag(k.cip, etag[0], k.ids.String(), len(k.body))
+			go setEtag(k.cip, etag[0], k.ids.String(), len(k.body))
 		}
 	} else if resp.StatusCode == 304 {
 		ids, length := getEtagIds(k.cip)
