@@ -19,7 +19,7 @@ func sqlInit() {
 	host, _ := os.Hostname()
 	log("connect to SQL: " + host)
 	database, err = sql.Open("mysql", c.SQL[host])
-	database.SetMaxOpenConns(30)
+	database.SetMaxOpenConns(5)
 	if err != nil {
 		panic("Unable to connect to SQL!")
 	}

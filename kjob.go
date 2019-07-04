@@ -101,6 +101,7 @@ func createJob(method string, specnum string, endpoint string, ciString string, 
 
 func getJobs() {
 	ress, err := jobget.Query()
+	defer ress.Close()
 	if err != nil {
 		log(err)
 		return
